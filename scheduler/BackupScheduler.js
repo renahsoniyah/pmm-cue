@@ -8,10 +8,20 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 
-mongoose.connect(`${process.env.DB_URI}/${process.env.DB_NAME}`, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-});
+try {
+  await mongoose.connect(process.env.DB_URI, {
+    dbName: process.env.DB_NAME,
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 60000, // Timeout lebih lama (60 detik)
+    socketTimeoutMS: 60000,          // Socket timeout (60 detik)
+    connectTimeoutMS: 60000,         // Koneksi timeout (60 detik)
+  });
+  console.log('✅ MongoDB connected successfully!');
+} catch (err) {
+  console.error('❌ MongoDB connection error:', err.message);
+  process.exit(1);
+}
 
 cron.schedule('*/1 * * * *', async () => {
   console.log('Memulai proses backup dan pembuatan report...');

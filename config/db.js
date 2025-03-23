@@ -5,11 +5,18 @@ const mongoose = require('mongoose');
 // Fungsi untuk menghubungkan ke database MongoDB
 const connectDB = async () => {
   try {
-    await mongoose.connect(`${process.env.DB_URI}/${process.env.DB_NAME}`);
-    console.log('MongoDB connected successfully!');
+    await mongoose.connect(process.env.DB_URI, {
+      dbName: process.env.DB_NAME,
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 60000, // Timeout lebih lama (60 detik)
+      socketTimeoutMS: 60000,          // Socket timeout (60 detik)
+      connectTimeoutMS: 60000,         // Koneksi timeout (60 detik)
+    });
+    console.log('✅ MongoDB connected successfully!');
   } catch (err) {
-    console.error('Error connecting to the database:', err);
-    process.exit(1);  // Hentikan aplikasi jika koneksi gagal
+    console.error('❌ MongoDB connection error:', err.message);
+    process.exit(1);
   }
 };
 
