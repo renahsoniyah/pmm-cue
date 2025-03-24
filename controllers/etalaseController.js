@@ -1,3 +1,5 @@
+require('dotenv').config();
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const EtalaseModel = require('../models/etalaseModel');
 const SupplierModel = require('../models/supplierModel');
 const logEtalaseModel = require('../models/logEtalaseModel');
@@ -6,6 +8,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const moment = require('moment'); // Pastikan moment.js terinstall
+const { uploadToFilebase, signedUrlTools } = require('../utils/upload');
+const mime = require('mime-types');
 
 // Konfigurasi multer untuk menyimpan file ke folder `uploads`
 const storage = multer.diskStorage({
@@ -18,35 +22,43 @@ const storage = multer.diskStorage({
   }
 });
 
+const s3Client = new S3Client({
+  region: 'us-east-1',
+  endpoint: process.env.FILEBASE_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.FILEBASE_ACCESS_KEY,
+    secretAccessKey: process.env.FILEBASE_SECRET_KEY,
+  },
+});
+
 exports.getEtalases = async (req, res) => {
   try {
     const page = parseInt(req.body.index) || 1;
     const limit = parseInt(req.body.limit) || 10;
     const skip = (page - 1) * limit;
-    const bentukBarang = req.body.bentukBarang; // Ambil filter dari request
+    const bentukBarang = req.body.bentukBarang;
 
     // Format hari ini sebagai string (YYYY-MM-DD)
-    // Buat rentang waktu dari awal hingga akhir hari ini
     const now = new Date();
-    const startOfToday = new Date(now.setHours(0, 0, 0, 0)); // 2025-03-23T00:00:00.000Z (Awal hari)
-    const endOfToday = new Date(now.setHours(23, 59, 59, 999)); // 2025-03-23T23:59:59.999Z (Akhir hari)
+    const startOfToday = new Date(now.setHours(0, 0, 0, 0));
+    const endOfToday = new Date(now.setHours(23, 59, 59, 999));
 
     // Kondisi filter awal
     let matchStage = {
       $or: [
-        { inActiveDate: { $exists: false } }, // Jika tidak ada inActiveDate
-        { inActiveDate: null },              // Jika null
-        { inActiveDate: "" },                // Jika kosong
+        { inActiveDate: { $exists: false } },
+        { inActiveDate: null },
+        { inActiveDate: "" },
         {
           inActiveDate: {
             $gte: startOfToday,
             $lte: endOfToday
           }
-        } // Termasuk semua waktu di hari ini
+        }
       ]
     };
 
-    // Jika bentukBarang diberikan, tambahkan filter bentukBarang
+    // Jika bentukBarang diberikan, tambahkan filter
     if (bentukBarang) {
       matchStage.bentukBarang = bentukBarang;
     }
@@ -67,6 +79,13 @@ exports.getEtalases = async (req, res) => {
       { $limit: limit }
     ]);
 
+    // **Generate Pre-signed URL jika fotoBarang ada**
+    for (let etalase of Etalases) {
+      if (etalase.fotoBarang) {
+        etalase.fotoBarang = await signedUrlTools(etalase.fotoBarang);
+      }
+    }
+
     // Hitung total data setelah filter
     const totalRecords = await EtalaseModel.countDocuments(matchStage);
 
@@ -81,7 +100,7 @@ exports.getEtalases = async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ resCode: '99', message: 'Error fetching Etalases', error: err });
+    return res.status(500).json({ resCode: '99', message: 'Error fetching Etalases', error: err.message });
   }
 };
 
@@ -199,7 +218,7 @@ exports.getEtalaseById = async (req, res) => {
 
 // Membuat pengguna baru
 exports.createEtalase = async (req, res) => {
-  const upload = multer({ storage }).single('fotoBarang'); // Sesuai dengan field di form-data
+  const upload = multer({ storage }).single('fotoBarang'); // Pastikan field sesuai dengan form-data
 
   upload(req, res, async (err) => {
     if (err) {
@@ -207,30 +226,45 @@ exports.createEtalase = async (req, res) => {
     }
 
     try {
-      const { nama, size, supplier, bentukBarang, settinganMC, jumlahKilo, jumlahMCPLS, hargaBeliSupplier, hargaJual, noSurat } = req.body;
-      const fotoBarang = req.file ? `/uploads/${req.file.filename}` : null; // Simpan path file jika ada
+      const {
+        nama, size, supplier, bentukBarang, settinganMC,
+        jumlahKilo, jumlahMCPLS, hargaBeliSupplier, hargaJual, noSurat
+      } = req.body;
 
-      // **Validasi supplier**: Cek apakah supplier ada di database
+      // **Validasi supplier**: Pastikan supplier ada di database
       const supplierData = await SupplierModel.findOne({ _id: supplier });
-
       if (!supplierData) {
         return res.status(400).json({ resCode: '99', resMessage: 'Invalid supplier ID' });
       }
 
-      // **Konversi data yang seharusnya angka**
+      // **Konversi data numerik**
       const parsedJumlahKilo = Number(jumlahKilo);
       const parsedJumlahMCPLS = Number(jumlahMCPLS);
       const parsedHargaBeliSupplier = Number(hargaBeliSupplier);
       const parsedHargaJual = Number(hargaJual);
-      
-      if (isNaN(parsedJumlahKilo) || isNaN(parsedJumlahMCPLS) || isNaN(parsedHargaBeliSupplier) || isNaN(parsedHargaJual)) {
+
+      if (
+        isNaN(parsedJumlahKilo) ||
+        isNaN(parsedJumlahMCPLS) ||
+        isNaN(parsedHargaBeliSupplier) ||
+        isNaN(parsedHargaJual)
+      ) {
         return res.status(400).json({ resCode: '99', resMessage: 'Invalid numeric values' });
       }
 
-      // Membuat etalase baru dengan supplier sebagai ObjectId
+      // **Upload ke Filebase jika ada file**
+      let fotoBarang = null;
+      if (req.file) {
+        const filePath = req.file.path; // Path lokal
+        const fileName = `etalase/${Date.now()}-${req.file.filename}`; // Path di Filebase
+        await uploadToFilebase(filePath, fileName); // Dapatkan URL dari Filebase
+        fotoBarang = fileName
+      }
+
+      // **Simpan Etalase ke database**
       const newEtalase = new EtalaseModel({
         nama,
-        fotoBarang,
+        fotoBarang, // URL dari Filebase
         size,
         supplier: new mongoose.Types.ObjectId(supplier),
         bentukBarang,
@@ -243,18 +277,16 @@ exports.createEtalase = async (req, res) => {
         created_at: new Date(),
         updated_at: new Date(),
       });
-
-      // Simpan ke database
       await newEtalase.save();
 
       // **Insert log etalase**
       const newLogEtalase = new logEtalaseModel({
-        nama: nama,
-        fotoBarang: fotoBarang,
-        size: size,
+        nama,
+        fotoBarang, // URL dari Filebase
+        size,
         supplier: new mongoose.Types.ObjectId(supplier),
-        bentukBarang: bentukBarang,
-        settinganMC: settinganMC,
+        bentukBarang,
+        settinganMC,
         jumlahKiloBefore: 0,
         jumlahKiloAfter: parsedJumlahKilo,
         jumlahMCPLSBefore: 0,
@@ -266,76 +298,74 @@ exports.createEtalase = async (req, res) => {
         created_at: new Date(),
         updated_at: new Date(),
       });
-    
       await newLogEtalase.save();
 
       return res.status(201).json({
         resCode: '00',
         resMessage: 'Etalase created successfully',
-        Etalase: newEtalase,
+        etalase: newEtalase,
         logEtalase: newLogEtalase,
       });
 
     } catch (err) {
-      console.error(err);
+      console.error('❌ Error:', err);
       return res.status(500).json({ resCode: '99', resMessage: 'Failed to create Etalase', error: err.message });
     }
   });
 };
 
 exports.updateEtalase = async (req, res) => {
-  const upload = multer({ storage }).single('fotoBarang'); // 'fotoBarang' sesuai dengan field di form-data
-
-  upload(req, res, async (err) => {
+  const upload = multer({ dest: 'uploads/' });
+  upload.single('fotoBarang')(req, res, async (err) => {
     if (err) {
       return res.status(500).json({ resCode: '99', resMessage: 'File upload failed', error: err.message });
     }
 
     const { id } = req.params;
     const { nama, size, supplier, bentukBarang, settinganMC, jumlahKilo, jumlahMCPLS, hargaBeliSupplier, hargaJual, noSurat } = req.body;
-    const newUrlFoto = req.file ? `/uploads/${req.file.filename}` : null; // Simpan path file jika ada
 
     try {
-      // **Validasi ID**
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ resCode: '99', message: 'Invalid ID format' });
       }
 
-      // **Ambil data barang lama**
       const existingBarang = await EtalaseModel.findById(id);
       if (!existingBarang) {
         return res.status(404).json({ resCode: '01', message: 'Barang not found' });
       }
 
-      // **Validasi supplier ID**
       if (supplier && !mongoose.Types.ObjectId.isValid(supplier)) {
         return res.status(400).json({ resCode: '99', message: 'Invalid supplier ID format' });
       }
 
-      const supplierData = await SupplierModel.findOne({ _id: supplier });
-      if (supplier && !supplierData) {
-        return res.status(400).json({ resCode: '99', resMessage: 'Supplier not found' });
-      }
+      let newUrlFoto = existingBarang.fotoBarang;
 
-      // **Konversi data yang harus berupa angka**
-      const parsedJumlahKilo = jumlahKilo ? Number(jumlahKilo) : existingBarang.jumlahKilo;
-      const parsedJumlahMCPLS = jumlahMCPLS ? Number(jumlahMCPLS) : existingBarang.jumlahMCPLS;
-      const parsedHargaBeliSupplier = hargaBeliSupplier ? Number(hargaBeliSupplier) : existingBarang.hargaBeliSupplier;
-      const parsedHargaJual = hargaJual ? Number(hargaJual) : existingBarang.hargaJual;
+      if (req.file) {
+        const fileContent = fs.readFileSync(req.file.path);
+        const fileExtension = path.extname(req.file.originalname);
+        const mimeType = mime.lookup(req.file.originalname) || 'application/octet-stream';
+        const fileKey = `etalase/${Date.now()}-${req.file.filename}${fileExtension}`;
 
-      if (isNaN(parsedJumlahKilo) || isNaN(parsedJumlahMCPLS) || isNaN(parsedHargaBeliSupplier) || isNaN(parsedHargaJual)) {
-        return res.status(400).json({ resCode: '99', resMessage: 'Invalid numeric values' });
-      }
+        await s3Client.send(new PutObjectCommand({
+          Bucket: process.env.FILEBASE_BUCKET_NAME,
+          Key: fileKey,
+          Body: fileContent,
+          ContentType: mimeType,
+        }));
 
-      // **Hapus file lama jika user mengupload foto baru**
-      if (newUrlFoto && existingBarang.fotoBarang) {
-        const oldFilePath = path.join(__dirname, '..', existingBarang.fotoBarang);
-        if (fs.existsSync(oldFilePath)) {
-          fs.unlinkSync(oldFilePath);
+        newUrlFoto = fileKey;
+
+        if (existingBarang.fotoBarang) {
+          const oldKey = existingBarang.fotoBarang;
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.FILEBASE_BUCKET_NAME,
+            Key: oldKey,
+          }));
         }
+
+        fs.unlinkSync(req.file.path); // Bersihkan file lokal
       }
 
-      // **Update data barang**
       const updatedEtalase = await EtalaseModel.findByIdAndUpdate(
         id,
         {
@@ -345,46 +375,42 @@ exports.updateEtalase = async (req, res) => {
           bentukBarang,
           settinganMC,
           noSurat,
-          jumlahKilo: parsedJumlahKilo,
-          jumlahMCPLS: parsedJumlahMCPLS,
-          hargaBeliSupplier: parsedHargaBeliSupplier,
-          hargaJual: parsedHargaJual,
-          fotoBarang: newUrlFoto || existingBarang.fotoBarang, // Pakai file baru jika ada, jika tidak, tetap pakai yang lama
+          jumlahKilo: Number(jumlahKilo) || existingBarang.jumlahKilo,
+          jumlahMCPLS: Number(jumlahMCPLS) || existingBarang.jumlahMCPLS,
+          hargaBeliSupplier: Number(hargaBeliSupplier) || existingBarang.hargaBeliSupplier,
+          hargaJual: Number(hargaJual) || existingBarang.hargaJual,
+          fotoBarang: newUrlFoto,
           updated_at: new Date(),
         },
-        { new: true } // Agar data terbaru dikembalikan
+        { new: true }
       );
 
-      // **Insert log etalase**
-      const newLogEtalase = new logEtalaseModel({
-        nama: nama,
-        fotoBarang: newUrlFoto || existingBarang.fotoBarang,
-        size: size,
+      await new logEtalaseModel({
+        nama,
+        fotoBarang: newUrlFoto,
+        size,
         supplier: new mongoose.Types.ObjectId(supplier),
-        bentukBarang: bentukBarang,
-        settinganMC: settinganMC,
+        bentukBarang,
+        settinganMC,
         jumlahKiloBefore: existingBarang.jumlahKilo,
-        jumlahKiloAfter: parsedJumlahKilo,
+        jumlahKiloAfter: Number(jumlahKilo),
         jumlahMCPLSBefore: existingBarang.jumlahMCPLS,
-        jumlahMCPLSAfter: parsedJumlahMCPLS,
-        hargaBeliSupplier: parsedHargaBeliSupplier,
-        hargaJual: parsedHargaJual,
+        jumlahMCPLSAfter: Number(jumlahMCPLS),
+        hargaBeliSupplier: Number(hargaBeliSupplier),
+        hargaJual: Number(hargaJual),
         status: 'UPDATE BY ADMIN',
         created_at: new Date(),
         updated_at: new Date(),
-      });
-    
-      await newLogEtalase.save();
+      }).save();
 
       res.status(200).json({
         resCode: '00',
         resMessage: 'Barang berhasil diupdate',
         Etalase: updatedEtalase,
       });
-
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ resCode: '99', resMessage: 'Failed to update Barang', error: err.message });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ resCode: '99', resMessage: 'Failed to update Barang', error: error.message });
     }
   });
 };
@@ -509,9 +535,8 @@ exports.penjualanEtalase = async (req, res) => {
 // delete pengguna baru
 exports.deleteEtalase = async (req, res) => {
   const { id } = req.params;
-  
+
   try {
-    // Cek apakah ID valid sebelum dipakai di MongoDB
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ resCode: '99', message: 'Invalid ID format' });
     }
@@ -521,13 +546,24 @@ exports.deleteEtalase = async (req, res) => {
       return res.status(404).json({ resCode: '01', message: 'Barang not found' });
     }
 
-    const deletedEtalase = await EtalaseModel.findOneAndDelete(id);
-    
-    if (!deletedEtalase) {
-      return res.status(404).json({ message: 'Etalase not found' });
+    // Hapus file dari Filebase jika ada
+    if (existingBarang.fotoBarang) {
+      const fileKey = existingBarang.fotoBarang;
+
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.FILEBASE_BUCKET_NAME,
+          Key: fileKey,
+        }));
+        console.log('File deleted from Filebase:', fileKey);
+      } catch (fileDeleteError) {
+        console.error('Error deleting file from Filebase:', fileDeleteError);
+      }
     }
 
-    // **Insert log etalase**
+    const deletedEtalase = await EtalaseModel.findByIdAndDelete(id);
+
+    // Buat log setelah penghapusan
     const newLogEtalase = new logEtalaseModel({
       nama: existingBarang.nama,
       fotoBarang: existingBarang.fotoBarang,
@@ -545,16 +581,16 @@ exports.deleteEtalase = async (req, res) => {
       created_at: new Date(),
       updated_at: new Date(),
     });
-  
+
     await newLogEtalase.save();
 
     res.status(200).json({
       resCode: '00',
-      resMessage: 'Etalase Berhasil di hapus',
+      resMessage: 'Etalase berhasil dihapus',
       Etalase: deletedEtalase,
     });
   } catch (err) {
-    console.error(err);
+    console.error('Error deleting Etalase:', err);
     res.status(500).json({ resCode: '01', message: 'Failed to delete Etalase', error: err.message });
   }
 };

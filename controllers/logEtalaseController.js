@@ -1,6 +1,7 @@
 const logEtalaseModel = require('../models/logEtalaseModel');
 const EtalaseModel = require('../models/etalaseModel');
 const mongoose = require('mongoose');
+const { signedUrlTools } = require('../utils/upload');
 
 exports.getlogEtalases = async (req, res) => {
   try {
@@ -53,6 +54,13 @@ exports.getlogEtalases = async (req, res) => {
     );
 
     const logEtalases = await logEtalaseModel.aggregate(pipeline);
+
+    // **Generate Pre-signed URL jika fotoBarang ada**
+    for (let logEtalase of logEtalases) {
+      if (logEtalase.fotoBarang) {
+        logEtalase.fotoBarang = await signedUrlTools(logEtalase.fotoBarang);
+      }
+    }
 
     const totalRecords = await logEtalaseModel.countDocuments(matchStage);
 
@@ -306,6 +314,13 @@ exports.getlogEtalasesLatest = async (req, res) => {
       { $skip: skip },
       { $limit: limit }
     ]);
+
+    // **Generate Pre-signed URL jika fotoBarang ada**
+    for (let logEtalase of logEtalases) {
+      if (logEtalase.fotoBarang) {
+        logEtalase.fotoBarang = await signedUrlTools(logEtalase.fotoBarang);
+      }
+    }
 
     // Menghitung total data dengan status "IN"
     const totalRecords = await logEtalaseModel.countDocuments({ status: "IN" });

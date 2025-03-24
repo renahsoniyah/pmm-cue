@@ -1,8 +1,12 @@
+require('dotenv').config();
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const SupplierModel = require('../models/supplierModel');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { uploadToFilebase, signedUrlTools } = require('../utils/upload');
+const mime = require('mime-types');
 
 // Konfigurasi multer untuk menyimpan file ke folder `uploads`
 const storage = multer.diskStorage({
@@ -15,6 +19,15 @@ const storage = multer.diskStorage({
   }
 });
 
+const s3Client = new S3Client({
+  region: 'us-east-1',
+  endpoint: process.env.FILEBASE_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.FILEBASE_ACCESS_KEY,
+    secretAccessKey: process.env.FILEBASE_SECRET_KEY,
+  },
+});
+
 // Mendapatkan semua pengguna
 exports.getSuppliers = async (req, res) => {
   try {
@@ -24,6 +37,13 @@ exports.getSuppliers = async (req, res) => {
 
     const temp = await SupplierModel.find().skip(skip).limit(limit);
     const totalRecords = await SupplierModel.countDocuments();
+
+    // **Generate Pre-signed URL jika urlFoto ada**
+    for (let supplier of temp) {
+      if (supplier.urlFoto) {
+        supplier.urlFoto = await signedUrlTools(supplier.urlFoto);
+      }
+    }
 
     return res.status(200).json({
       resCode: '00',
@@ -75,7 +95,14 @@ exports.createSupplier = async (req, res) => {
     }
 
     const { nama } = req.body;
-    const urlFoto = req.file ? `/uploads/${req.file.filename}` : null; // Simpan path file jika ada
+    // **Upload ke Filebase jika ada file**
+    let urlFoto = null;
+    if (req.file) {
+      const filePath = req.file.path; // Path lokal
+      const fileName = `supplier/${Date.now()}-${req.file.filename}`; // Path di Filebase
+      await uploadToFilebase(filePath, fileName); // Dapatkan URL dari Filebase
+      urlFoto = fileName
+    }
 
     try {
       // Membuat supplier baru
@@ -125,11 +152,38 @@ exports.updateSupplier = async (req, res) => {
       }
 
       // **Hapus file lama jika ada dan user mengupload file baru**
-      if (newUrlFoto && existingSupplier.urlFoto) {
-        const oldFilePath = path.join(__dirname, '..', existingSupplier.urlFoto);
-        if (fs.existsSync(oldFilePath)) {
-          fs.unlinkSync(oldFilePath);
+      // if (newUrlFoto && existingSupplier.urlFoto) {
+      //   const oldFilePath = path.join(__dirname, '..', existingSupplier.urlFoto);
+      //   if (fs.existsSync(oldFilePath)) {
+      //     fs.unlinkSync(oldFilePath);
+      //   }
+      // }
+      let newUrlFoto = existingSupplier.urlFoto;
+
+      if (req.file) {
+        const fileContent = fs.readFileSync(req.file.path);
+        const fileExtension = path.extname(req.file.originalname);
+        const mimeType = mime.lookup(req.file.originalname) || 'application/octet-stream';
+        const fileKey = `supplier/${Date.now()}-${req.file.filename}${fileExtension}`;
+
+        await s3Client.send(new PutObjectCommand({
+          Bucket: process.env.FILEBASE_BUCKET_NAME,
+          Key: fileKey,
+          Body: fileContent,
+          ContentType: mimeType,
+        }));
+
+        newUrlFoto = fileKey;
+
+        if (existingSupplier.urlFoto) {
+          const oldKey = existingSupplier.urlFoto;
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.FILEBASE_BUCKET_NAME,
+            Key: oldKey,
+          }));
         }
+
+        fs.unlinkSync(req.file.path); // Bersihkan file lokal
       }
 
       // **Update data supplier**
@@ -166,7 +220,27 @@ exports.deleteSupplier = async (req, res) => {
       return res.status(400).json({ resCode: '99', message: 'Invalid ID format' });
     }
 
-    const deletedSupplier = await SupplierModel.findOneAndDelete(id);
+    const existingSupplier = await SupplierModel.findById(id);
+    if (!existingSupplier) {
+      return res.status(404).json({ resCode: '01', message: 'Supplier not found' });
+    }
+
+    // Hapus file dari Filebase jika ada
+    if (existingSupplier.urlFoto) {
+      const fileKey = existingSupplier.urlFoto;
+
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.FILEBASE_BUCKET_NAME,
+          Key: fileKey,
+        }));
+        console.log('File deleted from Filebase:', fileKey);
+      } catch (fileDeleteError) {
+        console.error('Error deleting file from Filebase:', fileDeleteError);
+      }
+    }
+
+    const deletedSupplier = await SupplierModel.findByIdAndDelete(id);
     
     if (!deletedSupplier) {
       return res.status(404).json({ message: 'Supplier not found' });

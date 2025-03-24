@@ -1,5 +1,7 @@
+require('dotenv').config();
 const express = require('express');
 const router = express.Router();
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 
 // middleware 
 const { authMiddleware } = require('../middlewares/authMiddleware');
@@ -11,6 +13,17 @@ const etalaseController = require('../controllers/etalaseController');
 const logEtalaseController = require('../controllers/logEtalaseController');
 const reportController = require('../controllers/reportController');
 const { login, logout } = require('../controllers/authController');
+
+
+// s3
+const s3Client = new S3Client({
+  region: 'us-east-1',
+  endpoint: process.env.FILEBASE_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.FILEBASE_ACCESS_KEY,
+    secretAccessKey: process.env.FILEBASE_SECRET_KEY,
+  },
+});
 
 // auth 
 router.post('/login', login);
@@ -52,5 +65,24 @@ router.delete('/logEtalase/:id', authMiddleware, logEtalaseController.deletelogE
 
 // report
 router.post('/getAllReports', authMiddleware, reportController.getAllReports);
+
+router.get('/download/:fileKey', async (req, res) => {
+  try {
+    const { fileKey } = req.params;
+
+    const command = new GetObjectCommand({
+      Bucket: process.env.FILEBASE_BUCKET_NAME,
+      Key: fileKey,
+    });
+
+    const { Body } = await s3Client.send(command);
+
+    res.setHeader('Content-Disposition', `attachment; filename="${fileKey}"`);
+    Body.pipe(res);
+  } catch (error) {
+    console.error('Error fetching file:', error);
+    res.status(500).send('Gagal mengambil file.');
+  }
+});
 
 module.exports = router;

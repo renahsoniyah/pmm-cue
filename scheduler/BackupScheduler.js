@@ -4,9 +4,11 @@ const mongoose = require('mongoose');
 const Etalase = require('../models/etalaseModel');
 const Supplier = require('../models/supplierModel');
 const BackupEtalase = require('../models/backupEtalaseModel');
+const Report = require('../models/reportModel');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const { uploadToFilebase } = require('../utils/upload');
 
 try {
   mongoose.connect(process.env.DB_URI, {
@@ -23,7 +25,7 @@ try {
   process.exit(1);
 }
 
-cron.schedule('*/1 * * * *', async () => {
+cron.schedule('*/10 * * * *', async () => {
   console.log('Memulai proses backup dan pembuatan report...');
 
   const today = new Date().toISOString().split('T')[0];
@@ -182,7 +184,20 @@ cron.schedule('*/1 * * * *', async () => {
     doc.text(formatNumber(totalKRG), startX + columnWidths.slice(0, 7).reduce((a, b) => a + b, 0), y + 8, { width: columnWidths[7], align: 'center' });
 
     doc.end();
-    console.log('✅ Report berhasil dibuat:', reportPath);
+
+    writeStream.on('finish', async () => {
+      try {
+        // generate preview and upload
+        const filebaseUrl = await uploadToFilebase(reportPath, `${reportFileName}`);
+        console.log(`✅ File dapat diakses di: ${filebaseUrl}`);
+
+        // save report
+        await Report.findOneAndUpdate({ date: today }, { file_name: reportFileName, path: `${reportFileName}` }, { upsert: true });
+        console.log('✅ Report berhasil disimpan atau diperbarui di database.');
+      } catch (error) {
+        console.error('❌ Gagal mengunggah ke Filebase:', error);
+      }
+    });
   } catch (error) {
     console.error('❌ Error:', error);
   }
