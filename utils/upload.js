@@ -12,27 +12,30 @@ const s3Client = new S3Client({
   },
 });
 
-async function uploadToFilebase(filePath, fileName) {
-  const fileContent = require('fs').readFileSync(filePath);
-
+async function uploadToFilebase(fileBuffer, fileName) {
   // Ambil MIME type berdasarkan ekstensi file
-  const contentType = mime.lookup(filePath) || 'application/octet-stream';
+  const contentType = mime.lookup(fileName) || 'application/octet-stream';
 
   console.log(`🟢 Uploading: ${fileName} as ${contentType}`);
-  
-  // Upload file ke Filebase
+
+  try {
+    // Upload langsung dari buffer ke Filebase
   await s3Client.send(new PutObjectCommand({
-    Bucket: process.env.FILEBASE_BUCKET_NAME,
-    Key: fileName,
-    Body: fileContent,
-    ContentType: contentType,
-  }));
-  
-  console.log(`✅ File diunggah: ${fileName}`);
+      Bucket: process.env.FILEBASE_BUCKET_NAME,
+      Key: fileName,
+      Body: fileBuffer,
+      ContentType: contentType,
+    }));
 
-  let signedUrl = await signedUrlTools(fileName);
+    console.log(`✅ File diunggah: ${fileName}`);
 
-  return signedUrl;
+    // Ambil signed URL setelah upload berhasil
+    const signedUrl = await signedUrlTools(fileName);
+    return signedUrl;
+  } catch (error) {
+    console.error(`❌ Gagal mengunggah ke Filebase: ${error.message}`);
+    throw error;
+  }
 }
 
 async function signedUrlTools(fileName) {

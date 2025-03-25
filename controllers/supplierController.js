@@ -8,17 +8,6 @@ const fs = require('fs');
 const { uploadToFilebase, signedUrlTools } = require('../utils/upload');
 const mime = require('mime-types');
 
-// Konfigurasi multer untuk menyimpan file ke folder `uploads`
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Folder penyimpanan
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname)); // Simpan dengan nama unik
-  }
-});
-
 const s3Client = new S3Client({
   region: 'us-east-1',
   endpoint: process.env.FILEBASE_ENDPOINT,
@@ -87,7 +76,7 @@ exports.getSupplierById = async (req, res) => {
 
 // Membuat pengguna baru
 exports.createSupplier = async (req, res) => {
-  const upload = multer({ storage: storage }).single('urlFoto'); // 'foto' harus sesuai dengan field di form-data
+  const upload = multer({ storage: multer.memoryStorage() }).single('urlFoto');
 
   upload(req, res, async (err) => {
     if (err) {
@@ -95,17 +84,24 @@ exports.createSupplier = async (req, res) => {
     }
 
     const { nama } = req.body;
-    // **Upload ke Filebase jika ada file**
+    if (!nama) {
+      return res.status(400).json({ resCode: '99', resMessage: 'Nama is required' });
+    }
+
     let urlFoto = null;
+
     if (req.file) {
-      const filePath = req.file.path; // Path lokal
-      const fileName = `supplier/${Date.now()}-${req.file.filename}`; // Path di Filebase
-      await uploadToFilebase(filePath, fileName); // Dapatkan URL dari Filebase
-      urlFoto = fileName
+      try {
+        const fileName = `supplier/${Date.now()}-${req.file.originalname}`;
+        await uploadToFilebase(req.file.buffer, fileName);
+        urlFoto = fileName;
+      } catch (uploadError) {
+        console.error('Error uploading to Filebase:', uploadError);
+        return res.status(500).json({ resCode: '99', resMessage: 'Failed to upload file to Filebase', error: uploadError.message });
+      }
     }
 
     try {
-      // Membuat supplier baru
       const newSupplier = new SupplierModel({
         nama,
         urlFoto,
@@ -113,7 +109,6 @@ exports.createSupplier = async (req, res) => {
         updated_at: new Date(),
       });
 
-      // Simpan ke database
       await newSupplier.save();
 
       return res.status(201).json({
@@ -121,15 +116,15 @@ exports.createSupplier = async (req, res) => {
         resMessage: 'Supplier created successfully',
         Supplier: newSupplier,
       });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ resCode: '99', resMessage: 'Failed to create Supplier', error: err.message });
+    } catch (saveError) {
+      console.error('Error saving supplier:', saveError);
+      return res.status(500).json({ resCode: '99', resMessage: 'Failed to create Supplier', error: saveError.message });
     }
   });
 };
 
 exports.updateSupplier = async (req, res) => {
-  const upload = multer({ storage: storage }).single('urlFoto'); // 'urlFoto' sesuai dengan field di form-data
+  const upload = multer({ storage: multer.memoryStorage() }).single('urlFoto');
 
   upload(req, res, async (err) => {
     if (err) {
@@ -138,63 +133,59 @@ exports.updateSupplier = async (req, res) => {
 
     const { id } = req.params;
     const { nama } = req.body;
-    const newUrlFoto = req.file ? `/uploads/${req.file.filename}` : null; // Simpan path file jika ada
 
     try {
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ resCode: '99', message: 'Invalid ID format' });
       }
 
-      // **Ambil data supplier lama**
+      // Ambil data supplier lama
       const existingSupplier = await SupplierModel.findById(id);
       if (!existingSupplier) {
         return res.status(404).json({ resCode: '01', message: 'Supplier not found' });
       }
 
-      // **Hapus file lama jika ada dan user mengupload file baru**
-      // if (newUrlFoto && existingSupplier.urlFoto) {
-      //   const oldFilePath = path.join(__dirname, '..', existingSupplier.urlFoto);
-      //   if (fs.existsSync(oldFilePath)) {
-      //     fs.unlinkSync(oldFilePath);
-      //   }
-      // }
+      if (!nama) {
+        return res.status(400).json({ resCode: '99', message: 'Nama is required' });
+      }
+
       let newUrlFoto = existingSupplier.urlFoto;
 
       if (req.file) {
-        const fileContent = fs.readFileSync(req.file.path);
-        const fileExtension = path.extname(req.file.originalname);
-        const mimeType = mime.lookup(req.file.originalname) || 'application/octet-stream';
-        const fileKey = `supplier/${Date.now()}-${req.file.filename}${fileExtension}`;
+        try {
+          const mimeType = req.file.mimetype || 'application/octet-stream';
+          const fileKey = `supplier/${Date.now()}-${req.file.originalname}`;
 
-        await s3Client.send(new PutObjectCommand({
-          Bucket: process.env.FILEBASE_BUCKET_NAME,
-          Key: fileKey,
-          Body: fileContent,
-          ContentType: mimeType,
-        }));
-
-        newUrlFoto = fileKey;
-
-        if (existingSupplier.urlFoto) {
-          const oldKey = existingSupplier.urlFoto;
-          await s3Client.send(new DeleteObjectCommand({
+          await s3Client.send(new PutObjectCommand({
             Bucket: process.env.FILEBASE_BUCKET_NAME,
-            Key: oldKey,
+            Key: fileKey,
+            Body: req.file.buffer,
+            ContentType: mimeType,
           }));
-        }
 
-        fs.unlinkSync(req.file.path); // Bersihkan file lokal
+          newUrlFoto = fileKey;
+
+          if (existingSupplier.urlFoto) {
+            await s3Client.send(new DeleteObjectCommand({
+              Bucket: process.env.FILEBASE_BUCKET_NAME,
+              Key: existingSupplier.urlFoto,
+            }));
+          }
+        } catch (uploadError) {
+          console.error('Error uploading file to Filebase:', uploadError);
+          return res.status(500).json({ resCode: '99', resMessage: 'File upload to Filebase failed', error: uploadError.message });
+        }
       }
 
-      // **Update data supplier**
+      // Update data supplier
       const updatedSupplier = await SupplierModel.findByIdAndUpdate(
         id,
-        { 
+        {
           nama,
-          urlFoto: newUrlFoto || existingSupplier.urlFoto, // Gunakan file baru jika ada, jika tidak, tetap pakai yang lama
+          urlFoto: newUrlFoto,
           updated_at: new Date(),
         },
-        { new: true } // Agar data terbaru dikembalikan
+        { new: true }
       );
 
       res.status(200).json({
@@ -204,18 +195,19 @@ exports.updateSupplier = async (req, res) => {
       });
 
     } catch (err) {
-      console.error(err);
+      console.error('Error updating supplier:', err);
       return res.status(500).json({ resCode: '99', resMessage: 'Failed to update Supplier', error: err.message });
     }
   });
 };
 
+
 // delete pengguna baru
 exports.deleteSupplier = async (req, res) => {
   const { id } = req.params;
-  
+
   try {
-    // Cek apakah ID valid sebelum dipakai di MongoDB
+    // Validasi ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ resCode: '99', message: 'Invalid ID format' });
     }
@@ -226,33 +218,44 @@ exports.deleteSupplier = async (req, res) => {
     }
 
     // Hapus file dari Filebase jika ada
+    let fileDeleteStatus = 'No file to delete';
     if (existingSupplier.urlFoto) {
-      const fileKey = existingSupplier.urlFoto;
-
       try {
         await s3Client.send(new DeleteObjectCommand({
           Bucket: process.env.FILEBASE_BUCKET_NAME,
-          Key: fileKey,
+          Key: existingSupplier.urlFoto,
         }));
-        console.log('File deleted from Filebase:', fileKey);
+        fileDeleteStatus = `File deleted: ${existingSupplier.urlFoto}`;
+        console.log(fileDeleteStatus);
       } catch (fileDeleteError) {
         console.error('Error deleting file from Filebase:', fileDeleteError);
+        fileDeleteStatus = 'File deletion failed';
       }
     }
 
+    // Hapus supplier dari database
     const deletedSupplier = await SupplierModel.findByIdAndDelete(id);
-    
-    if (!deletedSupplier) {
-      return res.status(404).json({ message: 'Supplier not found' });
-    }
+
+    // Log status penghapusan
+    const newLogSupplier = new logSupplierModel({
+      nama: existingSupplier.nama,
+      urlFoto: existingSupplier.urlFoto || '',
+      status: 'DELETE BY ADMIN',
+      fileDeleteStatus: fileDeleteStatus,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    await newLogSupplier.save();
 
     res.status(200).json({
       resCode: '00',
-      resMessage: 'Supplier Berhasil di hapus',
+      resMessage: 'Supplier Berhasil dihapus',
       Supplier: deletedSupplier,
     });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ resCode: '01', message: 'Failed to delete Supplier', error: err.message });
+    console.error('Error deleting supplier:', err);
+    res.status(500).json({ resCode: '99', message: 'Failed to delete Supplier', error: err.message });
   }
 };

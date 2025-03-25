@@ -11,17 +11,6 @@ const moment = require('moment'); // Pastikan moment.js terinstall
 const { uploadToFilebase, signedUrlTools } = require('../utils/upload');
 const mime = require('mime-types');
 
-// Konfigurasi multer untuk menyimpan file ke folder `uploads`
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Folder penyimpanan
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname)); // Simpan dengan nama unik
-  }
-});
-
 const s3Client = new S3Client({
   region: 'us-east-1',
   endpoint: process.env.FILEBASE_ENDPOINT,
@@ -169,6 +158,13 @@ exports.getDistinctEtalases = async (req, res) => {
           }
         }
       ]);
+
+      // **Generate Pre-signed URL jika fotoBarang ada**
+      for (let etalase of distinctData) {
+        if (etalase.fotoBarang) {
+          etalase.fotoBarang = await signedUrlTools(etalase.fotoBarang);
+        }
+      }
     } else {
       // Jika type adalah 'nama' atau 'size', gunakan group untuk mendapatkan nilai distinct
       distinctData = await EtalaseModel.aggregate([
@@ -218,7 +214,7 @@ exports.getEtalaseById = async (req, res) => {
 
 // Membuat pengguna baru
 exports.createEtalase = async (req, res) => {
-  const upload = multer({ storage }).single('fotoBarang'); // Pastikan field sesuai dengan form-data
+  const upload = multer({ storage: multer.memoryStorage() }).single('fotoBarang');
 
   upload(req, res, async (err) => {
     if (err) {
@@ -255,9 +251,8 @@ exports.createEtalase = async (req, res) => {
       // **Upload ke Filebase jika ada file**
       let fotoBarang = null;
       if (req.file) {
-        const filePath = req.file.path; // Path lokal
         const fileName = `etalase/${Date.now()}-${req.file.filename}`; // Path di Filebase
-        await uploadToFilebase(filePath, fileName); // Dapatkan URL dari Filebase
+        await uploadToFilebase(req.file.buffer, fileName); // Dapatkan URL dari Filebase
         fotoBarang = fileName
       }
 
@@ -315,8 +310,9 @@ exports.createEtalase = async (req, res) => {
 };
 
 exports.updateEtalase = async (req, res) => {
-  const upload = multer({ dest: 'uploads/' });
-  upload.single('fotoBarang')(req, res, async (err) => {
+  const upload = multer({ storage: multer.memoryStorage() }).single('fotoBarang');
+
+  upload(req, res, async (err) => {
     if (err) {
       return res.status(500).json({ resCode: '99', resMessage: 'File upload failed', error: err.message });
     }
@@ -341,29 +337,25 @@ exports.updateEtalase = async (req, res) => {
       let newUrlFoto = existingBarang.fotoBarang;
 
       if (req.file) {
-        const fileContent = fs.readFileSync(req.file.path);
-        const fileExtension = path.extname(req.file.originalname);
-        const mimeType = mime.lookup(req.file.originalname) || 'application/octet-stream';
-        const fileKey = `etalase/${Date.now()}-${req.file.filename}${fileExtension}`;
+        const fileExtension = req.file.originalname.split('.').pop();
+        const mimeType = req.file.mimetype || 'application/octet-stream';
+        const fileKey = `etalase/${Date.now()}-${req.file.originalname}`;
 
         await s3Client.send(new PutObjectCommand({
           Bucket: process.env.FILEBASE_BUCKET_NAME,
           Key: fileKey,
-          Body: fileContent,
+          Body: req.file.buffer,
           ContentType: mimeType,
         }));
 
         newUrlFoto = fileKey;
 
         if (existingBarang.fotoBarang) {
-          const oldKey = existingBarang.fotoBarang;
           await s3Client.send(new DeleteObjectCommand({
             Bucket: process.env.FILEBASE_BUCKET_NAME,
-            Key: oldKey,
+            Key: existingBarang.fotoBarang,
           }));
         }
-
-        fs.unlinkSync(req.file.path); // Bersihkan file lokal
       }
 
       const updatedEtalase = await EtalaseModel.findByIdAndUpdate(
@@ -416,7 +408,7 @@ exports.updateEtalase = async (req, res) => {
 };
 
 exports.penjualanEtalase = async (req, res) => {
-  const upload = multer({ storage }).single('fotoBarang'); // 'fotoBarang' sesuai dengan field di form-data
+  const upload = multer({ storage: multer.memoryStorage() }).single('uploads');
 
   upload(req, res, async (err) => {
     if (err) {
@@ -547,6 +539,7 @@ exports.deleteEtalase = async (req, res) => {
     }
 
     // Hapus file dari Filebase jika ada
+    let fileDeleteStatus = 'No file to delete';
     if (existingBarang.fotoBarang) {
       const fileKey = existingBarang.fotoBarang;
 
@@ -555,18 +548,21 @@ exports.deleteEtalase = async (req, res) => {
           Bucket: process.env.FILEBASE_BUCKET_NAME,
           Key: fileKey,
         }));
-        console.log('File deleted from Filebase:', fileKey);
+        fileDeleteStatus = `File deleted: ${fileKey}`;
+        console.log(fileDeleteStatus);
       } catch (fileDeleteError) {
         console.error('Error deleting file from Filebase:', fileDeleteError);
+        fileDeleteStatus = 'File deletion failed';
       }
     }
 
+    // Hapus data dari database
     const deletedEtalase = await EtalaseModel.findByIdAndDelete(id);
 
     // Buat log setelah penghapusan
     const newLogEtalase = new logEtalaseModel({
       nama: existingBarang.nama,
-      fotoBarang: existingBarang.fotoBarang,
+      fotoBarang: existingBarang.fotoBarang || '',
       size: existingBarang.size,
       supplier: new mongoose.Types.ObjectId(existingBarang.supplier),
       bentukBarang: existingBarang.bentukBarang,
@@ -578,6 +574,7 @@ exports.deleteEtalase = async (req, res) => {
       hargaBeliSupplier: existingBarang.hargaBeliSupplier,
       hargaJual: existingBarang.hargaJual,
       status: 'DELETE BY ADMIN',
+      fileDeleteStatus: fileDeleteStatus,
       created_at: new Date(),
       updated_at: new Date(),
     });

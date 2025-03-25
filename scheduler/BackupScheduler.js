@@ -38,14 +38,14 @@ cron.schedule('*/10 * * * *', async () => {
     $or: [
       { inActiveDate: { $exists: false } },
       { inActiveDate: null },
-      { inActiveDate: "" },
+      { inActiveDate: '' },
       {
         inActiveDate: {
           $gte: startOfToday,
-          $lte: endOfToday
-        }
-      }
-    ]
+          $lte: endOfToday,
+        },
+      },
+    ],
   };
 
   try {
@@ -56,10 +56,10 @@ cron.schedule('*/10 * * * *', async () => {
           from: 'suppliers',
           localField: 'supplier',
           foreignField: '_id',
-          as: 'supplierData'
-        }
+          as: 'supplierData',
+        },
       },
-      { $unwind: { path: '$supplierData', preserveNullAndEmptyArrays: true } }
+      { $unwind: { path: '$supplierData', preserveNullAndEmptyArrays: true } },
     ]);
 
     if (itemsToBackup.length === 0) {
@@ -67,13 +67,13 @@ cron.schedule('*/10 * * * *', async () => {
       return;
     }
 
-    const backupData = itemsToBackup.map(item => {
+    const backupData = itemsToBackup.map((item) => {
       const { _id, ...rest } = item;
       return {
         ...rest,
         backup_date: new Date(),
         hargaBeli: item.hargaBeliSupplier || 0,
-        hargaJual: item.hargaJual || 0
+        hargaJual: item.hargaJual || 0,
       };
     });
 
@@ -81,12 +81,27 @@ cron.schedule('*/10 * * * *', async () => {
     console.log(`${backupData.length} barang berhasil di-backup.`);
 
     const reportFileName = `report_${today}.pdf`;
-    const reportPath = path.join('reports', reportFileName);
-    const absoluteReportPath = path.join(__dirname, '..', reportPath);
 
     const doc = new PDFDocument({ margin: 40, size: 'A4' });
-    const writeStream = fs.createWriteStream(absoluteReportPath);
-    doc.pipe(writeStream);
+    const buffers = [];
+
+    doc.on('data', (chunk) => buffers.push(chunk));
+    doc.on('end', async () => {
+      try {
+        const reportBuffer = Buffer.concat(buffers);
+        const filebaseUrl = await uploadToFilebase(reportBuffer, reportFileName);
+
+        await Report.findOneAndUpdate(
+          { date: today },
+          { file_name: reportFileName, path: reportFileName },
+          { upsert: true }
+        );
+
+        console.log(`✅ File dapat diakses di: ${filebaseUrl}`);
+      } catch (error) {
+        console.error('❌ Gagal mengunggah ke Filebase:', error);
+      }
+    });
 
     doc.fontSize(16).fillColor('black').text('STOK GLOBAL COLD STORAGE PSR BARU', { align: 'center' });
     doc.fontSize(12).text(`PERIODE ${today}`, { align: 'center' });
@@ -109,12 +124,11 @@ cron.schedule('*/10 * * * *', async () => {
       contentWidth * 0.06,
       contentWidth * 0.09,
       contentWidth * 0.09,
-      contentWidth * 0.10, // Lebar kolom "SALINAN/MASUK" diperbesar
-      contentWidth * 0.08  // Lebar kolom "KET" disesuaikan
+      contentWidth * 0.10,
+      contentWidth * 0.08,
     ];
 
     const startX = doc.page.margins.left + tableMargin;
-    let y = doc.y + 5;
 
     const truncate = (text, length) => (text.length > length ? text.substring(0, length) + '...' : text);
 
@@ -123,15 +137,13 @@ cron.schedule('*/10 * * * *', async () => {
       return Number(num) % 1 === 0 ? num.toString() : num.toFixed(2);
     };
 
-    doc.fillColor('white').rect(startX, y, contentWidth, 25).fill('#4682B4');
+    doc.fillColor('white').rect(startX, doc.y + 5, contentWidth, 25).fill('#4682B4');
     headers.forEach((header, i) => {
-      doc.fillColor('white').fontSize(6).text(header, startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5, y + 7, {
+      doc.fillColor('white').fontSize(6).text(header, startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5, doc.y + 12, {
         width: columnWidths[i] - 10,
         align: 'center',
       });
     });
-
-    doc.moveDown(1.5);
 
     let totalKG = 0, totalMC = 0, totalKRG = 0;
 
@@ -151,23 +163,17 @@ cron.schedule('*/10 * * * *', async () => {
         item.hargaBeliSupplier ? `Rp ${item.hargaBeliSupplier.toLocaleString()}` : '-',
         item.hargaJual ? `Rp ${item.hargaJual.toLocaleString()}` : '-',
         truncate(item.noSurat || '-', 30),
-        keterangan
+        keterangan,
       ];
 
-      totalKG += parseFloat(item.jumlahKilo || 0);
-      totalMC += parseFloat(item.jumlahMCPLS || 0);
-      totalKRG += parseFloat(item.jumlahKRG || 0);
-
-      y = doc.y;
-
       if (index % 2 === 0) {
-        doc.fillColor('#F5F5F5').rect(startX, y, contentWidth, 22).fill();
+        doc.fillColor('#F5F5F5').rect(startX, doc.y, contentWidth, 22).fill();
       }
 
       values.forEach((value, i) => {
-        doc.fillColor('black').fontSize(6).text(value.toString(), startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5, y + 5, {
+        doc.fillColor('black').fontSize(6).text(value.toString(), startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5, doc.y + 5, {
           width: columnWidths[i] - 10,
-          align: 'center'
+          align: 'center',
         });
       });
 
@@ -185,19 +191,6 @@ cron.schedule('*/10 * * * *', async () => {
 
     doc.end();
 
-    writeStream.on('finish', async () => {
-      try {
-        // generate preview and upload
-        const filebaseUrl = await uploadToFilebase(reportPath, `${reportFileName}`);
-        console.log(`✅ File dapat diakses di: ${filebaseUrl}`);
-
-        // save report
-        await Report.findOneAndUpdate({ date: today }, { file_name: reportFileName, path: `${reportFileName}` }, { upsert: true });
-        console.log('✅ Report berhasil disimpan atau diperbarui di database.');
-      } catch (error) {
-        console.error('❌ Gagal mengunggah ke Filebase:', error);
-      }
-    });
   } catch (error) {
     console.error('❌ Error:', error);
   }
