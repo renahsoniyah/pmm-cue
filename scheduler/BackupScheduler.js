@@ -15,9 +15,9 @@ try {
     dbName: process.env.DB_NAME,
     useNewUrlParser: true,
     useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 60000, // Timeout lebih lama (60 detik)
-    socketTimeoutMS: 60000,          // Socket timeout (60 detik)
-    connectTimeoutMS: 60000,         // Koneksi timeout (60 detik)
+    serverSelectionTimeoutMS: 60000,
+    socketTimeoutMS: 60000,
+    connectTimeoutMS: 60000,
   });
   console.log('✅ MongoDB connected successfully!');
 } catch (err) {
@@ -25,7 +25,7 @@ try {
   process.exit(1);
 }
 
-cron.schedule('*/10 * * * *', async () => {
+cron.schedule('*/1 * * * *', async () => {
   console.log('Memulai proses backup dan pembuatan report...');
 
   const today = new Date().toISOString().split('T')[0];
@@ -103,6 +103,7 @@ cron.schedule('*/10 * * * *', async () => {
       }
     });
 
+    // --- HEADER PDF ---
     doc.fontSize(16).fillColor('black').text('STOK GLOBAL COLD STORAGE PSR BARU', { align: 'center' });
     doc.fontSize(12).text(`PERIODE ${today}`, { align: 'center' });
     doc.moveDown(1);
@@ -129,27 +130,37 @@ cron.schedule('*/10 * * * *', async () => {
     ];
 
     const startX = doc.page.margins.left + tableMargin;
+    const headerHeight = 25;
+    const headerY = doc.y + 5;
 
-    const truncate = (text, length) => (text.length > length ? text.substring(0, length) + '...' : text);
-
-    const formatNumber = (num) => {
-      if (!num) return '0';
-      return Number(num) % 1 === 0 ? num.toString() : num.toFixed(2);
-    };
-
-    doc.fillColor('white').rect(startX, doc.y + 5, contentWidth, 25).fill('#4682B4');
+    // Draw Header
+    doc.fillColor('white').rect(startX, headerY, contentWidth, headerHeight).fill('#4682B4');
     headers.forEach((header, i) => {
-      doc.fillColor('white').fontSize(6).text(header, startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5, doc.y + 12, {
+      const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5;
+      doc.fillColor('white').fontSize(6).text(header, x, headerY + 8, {
         width: columnWidths[i] - 10,
         align: 'center',
       });
     });
+
+    doc.moveDown(2); // Space after header
+
+    const truncate = (text, length) => (text && text.length > length ? text.substring(0, length) + '...' : text);
+    const formatNumber = (num) => {
+      if (!num) return '0';
+      let temp = Number(num);
+      return temp % 1 === 0 ? temp.toString() : temp.toFixed(2);
+    };
 
     let totalKG = 0, totalMC = 0, totalKRG = 0;
 
     itemsToBackup.forEach((item, index) => {
       const supplierName = item.supplierData?.nama || '-';
       const keterangan = Number(item.jumlahKilo) === 0 ? 'Habis' : 'STOK OPNAME';
+
+      totalKG += Number(item.jumlahKilo) || 0;
+      totalMC += Number(item.jumlahMCPLS) || 0;
+      totalKRG += Number(item.jumlahKRG) || 0;
 
       const values = [
         index + 1,
@@ -166,12 +177,14 @@ cron.schedule('*/10 * * * *', async () => {
         keterangan,
       ];
 
+      const rowY = doc.y;
       if (index % 2 === 0) {
-        doc.fillColor('#F5F5F5').rect(startX, doc.y, contentWidth, 22).fill();
+        doc.fillColor('#F5F5F5').rect(startX, rowY, contentWidth, 22).fill();
       }
 
       values.forEach((value, i) => {
-        doc.fillColor('black').fontSize(6).text(value.toString(), startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5, doc.y + 5, {
+        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0) + 5;
+        doc.fillColor('black').fontSize(6).text(value.toString(), x, rowY + 5, {
           width: columnWidths[i] - 10,
           align: 'center',
         });
@@ -180,14 +193,23 @@ cron.schedule('*/10 * * * *', async () => {
       doc.moveDown(1);
     });
 
-    y = doc.y;
+    // Footer Total
+    const y = doc.y;
     doc.fillColor('#B22222').rect(startX, y, contentWidth, 30).fill();
-
     doc.fillColor('white').fontSize(7).text('GRAND TOTAL', startX + 5, y + 8);
 
-    doc.text(formatNumber(totalKG), startX + columnWidths.slice(0, 5).reduce((a, b) => a + b, 0), y + 8, { width: columnWidths[5], align: 'center' });
-    doc.text(formatNumber(totalMC), startX + columnWidths.slice(0, 6).reduce((a, b) => a + b, 0), y + 8, { width: columnWidths[6], align: 'center' });
-    doc.text(formatNumber(totalKRG), startX + columnWidths.slice(0, 7).reduce((a, b) => a + b, 0), y + 8, { width: columnWidths[7], align: 'center' });
+    doc.text(formatNumber(totalKG), startX + columnWidths.slice(0, 5).reduce((a, b) => a + b, 0), y + 8, {
+      width: columnWidths[5],
+      align: 'center',
+    });
+    doc.text(formatNumber(totalMC), startX + columnWidths.slice(0, 6).reduce((a, b) => a + b, 0), y + 8, {
+      width: columnWidths[6],
+      align: 'center',
+    });
+    doc.text(formatNumber(totalKRG), startX + columnWidths.slice(0, 7).reduce((a, b) => a + b, 0), y + 8, {
+      width: columnWidths[7],
+      align: 'center',
+    });
 
     doc.end();
 
