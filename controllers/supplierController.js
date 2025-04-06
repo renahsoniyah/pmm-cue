@@ -23,9 +23,17 @@ exports.getSuppliers = async (req, res) => {
     const page = parseInt(req.body.index) || 1; // Default to page 1
     const limit = parseInt(req.body.limit) || 10; // Default limit to 10
     const skip = (page - 1) * limit;
+    const search = req.body.search || ''; // ambil keyword pencarian dari body
 
-    const temp = await SupplierModel.find().skip(skip).limit(limit);
-    const totalRecords = await SupplierModel.countDocuments();
+    // Buat kondisi pencarian
+    const searchQuery = search
+      ? {
+          nama: { $regex: search, $options: 'i' } // Case-insensitive
+        }
+      : {};
+
+    const temp = await SupplierModel.find(searchQuery).skip(skip).limit(limit);
+    const totalRecords = await SupplierModel.countDocuments(searchQuery);
 
     // **Generate Pre-signed URL jika urlFoto ada**
     for (let supplier of temp) {
@@ -44,9 +52,14 @@ exports.getSuppliers = async (req, res) => {
       totalPages: Math.ceil(totalRecords / limit),
     });
   } catch (err) {
-    return res.status(500).json({ resCode: '99', message: 'Error fetching Suppliers', error: err });
+    return res.status(500).json({
+      resCode: '99',
+      message: 'Error fetching Suppliers',
+      error: err.message,
+    });
   }
 };
+
 
 exports.getSupplierById = async (req, res) => {
   const { id } = req.params;

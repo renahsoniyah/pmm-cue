@@ -28,33 +28,42 @@ exports.getEtalases = async (req, res) => {
     const limit = parseInt(req.body.limit) || 10;
     const skip = (page - 1) * limit;
     const bentukBarang = req.body.bentukBarang;
+    const search = req.body.search || ''; // Keyword pencarian
 
-    // Format hari ini sebagai string (YYYY-MM-DD)
     const now = new Date();
     const startOfToday = new Date(now.setHours(0, 0, 0, 0));
     const endOfToday = new Date(now.setHours(23, 59, 59, 999));
 
-    // Kondisi filter awal
     let matchStage = {
-      $or: [
-        { inActiveDate: { $exists: false } },
-        { inActiveDate: null },
-        { inActiveDate: "" },
+      $and: [
         {
-          inActiveDate: {
-            $gte: startOfToday,
-            $lte: endOfToday
-          }
+          $or: [
+            { inActiveDate: { $exists: false } },
+            { inActiveDate: null },
+            { inActiveDate: "" },
+            {
+              inActiveDate: {
+                $gte: startOfToday,
+                $lte: endOfToday
+              }
+            }
+          ]
         }
       ]
     };
 
-    // Jika bentukBarang diberikan, tambahkan filter
     if (bentukBarang) {
-      matchStage.bentukBarang = bentukBarang;
+      matchStage.$and.push({ bentukBarang: bentukBarang });
     }
 
-    // Query dengan filter dan pagination
+    if (search) {
+      matchStage.$and.push({
+        $or: [
+          { nama: { $regex: search, $options: 'i' } },
+        ]
+      });
+    }
+
     const Etalases = await EtalaseModel.aggregate([
       { $match: matchStage },
       {
@@ -70,14 +79,12 @@ exports.getEtalases = async (req, res) => {
       { $limit: limit }
     ]);
 
-    // **Generate Pre-signed URL jika fotoBarang ada**
     for (let etalase of Etalases) {
       if (etalase.fotoBarang) {
         etalase.fotoBarang = await signedUrlTools(etalase.fotoBarang);
       }
     }
 
-    // Hitung total data setelah filter
     const totalRecords = await EtalaseModel.countDocuments(matchStage);
 
     return res.status(200).json({
