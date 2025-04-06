@@ -829,7 +829,7 @@ exports.getFishSummaryByBentukBarang = async (req, res) => {
   }
 };
 
-exports.report = async () => {
+exports.report = async (req, res) => {
   console.log('Memulai proses backup dan pembuatan report...');
 
   const today = new Date().toISOString().split('T')[0];
@@ -852,7 +852,7 @@ exports.report = async () => {
   };
 
   try {
-    const itemsToBackup = await Etalase.aggregate([
+    const itemsToBackup = await EtalaseModel.aggregate([
       { $match: matchStage },
       {
         $lookup: {
@@ -887,12 +887,13 @@ exports.report = async () => {
     const reportFileName = `report_${today}.pdf`;
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
     const buffers = [];
+    let filebaseUrl = ""
 
     doc.on('data', (chunk) => buffers.push(chunk));
     doc.on('end', async () => {
       try {
         const reportBuffer = Buffer.concat(buffers);
-        const filebaseUrl = await uploadToFilebase(reportBuffer, reportFileName);
+        filebaseUrl = await uploadToFilebase(reportBuffer, reportFileName);
 
         await Report.findOneAndUpdate(
           { date: today },
@@ -1024,7 +1025,13 @@ exports.report = async () => {
 
     doc.end();
 
-  } catch (error) {
-    console.error('❌ Error:', error);
+    return res.status(200).json({
+      resCode: '00',
+      file : 'berhasil'
+    });
+  } catch (err) {
+    console.error('❌ Error:', err);
+    return res.status(500).json({ resCode: '99', message: 'Error fetching Etalases', error: err.message });
+
   }
 }
