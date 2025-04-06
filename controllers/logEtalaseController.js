@@ -299,9 +299,26 @@ exports.getlogEtalasesLatest = async (req, res) => {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    // Data log etalase dengan status "IN"
-    const logEtalases = await logEtalaseModel.aggregate([
-      { $match: { status: "IN" } },
+    const now = new Date();
+    const startOfToday = new Date(now.setHours(0, 0, 0, 0));
+    const endOfToday = new Date(now.setHours(23, 59, 59, 999));
+
+    // Query dengan filter dan pagination
+    const Etalases = await EtalaseModel.aggregate([
+      { $match: {
+          $or: [
+            { inActiveDate: { $exists: false } },
+            { inActiveDate: null },
+            { inActiveDate: "" },
+            {
+              inActiveDate: {
+                $gte: startOfToday,
+                $lte: endOfToday
+              }
+            }
+          ]
+        } 
+      },
       {
         $lookup: {
           from: 'suppliers',
@@ -310,20 +327,32 @@ exports.getlogEtalasesLatest = async (req, res) => {
           as: 'supplierData'
         }
       },
-      { $sort: { created_at: -1 } },
+      { $sort: { updated_at: -1 } },
       { $skip: skip },
       { $limit: limit }
     ]);
 
     // **Generate Pre-signed URL jika fotoBarang ada**
-    for (let logEtalase of logEtalases) {
-      if (logEtalase.fotoBarang) {
-        logEtalase.fotoBarang = await signedUrlTools(logEtalase.fotoBarang);
+    for (let etalase of Etalases) {
+      if (etalase.fotoBarang) {
+        etalase.fotoBarang = await signedUrlTools(etalase.fotoBarang);
       }
     }
 
-    // Menghitung total data dengan status "IN"
-    const totalRecords = await logEtalaseModel.countDocuments({ status: "IN" });
+    // Hitung total data setelah filter
+    const totalRecords = await EtalaseModel.countDocuments({
+      $or: [
+        { inActiveDate: { $exists: false } },
+        { inActiveDate: null },
+        { inActiveDate: "" },
+        {
+          inActiveDate: {
+            $gte: startOfToday,
+            $lte: endOfToday
+          }
+        }
+      ]
+    });
 
     // Menghitung total ikan yang masuk hari ini (hanya total count)
     const todayTotalFish = await logEtalaseModel.countDocuments({
@@ -334,7 +363,7 @@ exports.getlogEtalasesLatest = async (req, res) => {
     return res.status(200).json({
       resCode: '00',
       resMessage: 'Berhasil Mendapatkan data',
-      logEtalase: logEtalases,
+      logEtalase: Etalases,
       page,
       limit,
       totalRecords,

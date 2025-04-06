@@ -7,8 +7,6 @@ const connectDB = async () => {
   try {
     await mongoose.connect(process.env.DB_URI, {
       dbName: process.env.DB_NAME,
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 60000, // Timeout lebih lama (60 detik)
       socketTimeoutMS: 60000,          // Socket timeout (60 detik)
       connectTimeoutMS: 60000,         // Koneksi timeout (60 detik)

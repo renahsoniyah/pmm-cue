@@ -45,7 +45,9 @@ router.delete('/supplier/:id', authMiddleware, supplierController.deleteSupplier
 
 // dashboard
 router.post('/getetalase', etalaseController.getEtalases);
+router.post('/report', etalaseController.report);
 router.post('/getEtalaseParam', etalaseController.getDistinctEtalases);
+router.post('/getEtalaseParamAll', etalaseController.getDistinctEtalasesAll);
 router.post('/getSummaryFish', authMiddleware, etalaseController.getFishSummaryByBentukBarang);
 
 // eatalase

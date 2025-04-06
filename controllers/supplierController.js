@@ -236,18 +236,6 @@ exports.deleteSupplier = async (req, res) => {
     // Hapus supplier dari database
     const deletedSupplier = await SupplierModel.findByIdAndDelete(id);
 
-    // Log status penghapusan
-    const newLogSupplier = new logSupplierModel({
-      nama: existingSupplier.nama,
-      urlFoto: existingSupplier.urlFoto || '',
-      status: 'DELETE BY ADMIN',
-      fileDeleteStatus: fileDeleteStatus,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-
-    await newLogSupplier.save();
-
     res.status(200).json({
       resCode: '00',
       resMessage: 'Supplier Berhasil dihapus',
