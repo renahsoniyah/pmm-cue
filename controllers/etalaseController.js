@@ -914,7 +914,7 @@ exports.report = async (req, res) => {
       }
     });
 
-    const headers = ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC', 'KRG', 'KET'];
+    const headers = ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG', 'KET'];
 
     const tableMarginX = 0;
     const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -987,8 +987,8 @@ exports.report = async (req, res) => {
         formattedDate,
         truncate(item.noSurat || '-', 30),
         formatNumber(item.jumlahKilo),
-        formatNumber(item.jumlahMCPLS),
-        formatNumber(item.jumlahKRG),
+        item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
+        item.bentukBarang === 'KRG' ? formatNumber(item.jumlahKRG) : '0',
         keterangan,
       ];
 
