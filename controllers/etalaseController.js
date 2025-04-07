@@ -979,6 +979,9 @@ exports.report = async (req, res) => {
       const date = new Date(item.created_at);
       const formattedDate = `${String(date.getDate()).padStart(2, '0')} ${String(date.getMonth() + 1).padStart(2, '0')} ${date.getFullYear()}`;
 
+      if (item.bentukBarang !== 'MC' && item.bentukBarang !== 'PLS') {
+        debugger
+      }
       const values = [
         index + 1,
         truncate(item.nama, 15),
@@ -988,7 +991,7 @@ exports.report = async (req, res) => {
         truncate(item.noSurat || '-', 30),
         formatNumber(item.jumlahKilo),
         item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
-        item.bentukBarang === 'KRG' ? formatNumber(item.jumlahKRG) : '0',
+        item.bentukBarang === 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
         keterangan,
       ];
 
