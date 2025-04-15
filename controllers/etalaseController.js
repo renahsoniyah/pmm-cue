@@ -878,19 +878,6 @@ exports.report = async (req, res) => {
       return;
     }
 
-    const backupData = itemsToBackup.map((item) => {
-      const { _id, ...rest } = item;
-      return {
-        ...rest,
-        backup_date: new Date(),
-        hargaBeli: item.hargaBeliSupplier || 0,
-        hargaJual: item.hargaJual || 0,
-      };
-    });
-
-    await mongoose.connection.collection('backupetalases').insertMany(backupData);
-    console.log(`${backupData.length} barang berhasil di-backup.`);
-
     const reportFileName = `report_${today}.pdf`;
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
     const buffers = [];

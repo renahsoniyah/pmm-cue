@@ -3,7 +3,6 @@ const cron = require('node-cron');
 const mongoose = require('mongoose');
 const Etalase = require('../models/etalaseModel');
 const Supplier = require('../models/supplierModel');
-const BackupEtalase = require('../models/backupEtalaseModel');
 const Report = require('../models/reportModel');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
@@ -64,19 +63,6 @@ cron.schedule('*/1 * * * *', async () => {
       console.log('Tidak ada barang yang perlu di-backup hari ini.');
       return;
     }
-
-    const backupData = itemsToBackup.map((item) => {
-      const { _id, ...rest } = item;
-      return {
-        ...rest,
-        backup_date: new Date(),
-        hargaBeli: item.hargaBeliSupplier || 0,
-        hargaJual: item.hargaJual || 0,
-      };
-    });
-
-    await mongoose.connection.collection('backupetalases').insertMany(backupData);
-    console.log(`${backupData.length} barang berhasil di-backup.`);
 
     const reportFileName = `report_${today}.pdf`;
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
