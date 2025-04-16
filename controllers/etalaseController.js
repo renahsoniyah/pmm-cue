@@ -27,8 +27,8 @@ exports.getEtalases = async (req, res) => {
     const page = parseInt(req.body.index) || 1;
     const limit = parseInt(req.body.limit) || 10;
     const skip = (page - 1) * limit;
-    const bentukBarang = req.body.bentukBarang;
-    const search = req.body.search || ''; // Keyword pencarian
+
+    const { bentukBarang, search, nama, size, supplier } = req.body;
 
     const now = new Date();
     const startOfToday = new Date(now.setHours(0, 0, 0, 0));
@@ -62,6 +62,26 @@ exports.getEtalases = async (req, res) => {
           { nama: { $regex: search, $options: 'i' } },
         ]
       });
+    }
+
+    // Filter tambahan
+    if (nama) {
+      matchStage.$and.push({ nama: { $regex: nama, $options: "i" } });
+    }
+
+    if (size) {
+      matchStage.$and.push({ size: size });
+    }
+
+    if (supplier) {
+      try {
+        matchStage.$and.push({ supplier: new mongoose.Types.ObjectId(supplier) });
+      } catch (error) {
+        return res.status(400).json({
+          resCode: "01",
+          resMessage: "Invalid supplier ID format",
+        });
+      }
     }
 
     const Etalases = await EtalaseModel.aggregate([
@@ -465,7 +485,6 @@ exports.updateEtalase = async (req, res) => {
           jumlahKilo: Number(jumlahKilo) || existingBarang.jumlahKilo,
           jumlahMCPLS: Number(jumlahMCPLS) || existingBarang.jumlahMCPLS,
           hargaBeliSupplier: Number(hargaBeliSupplier) || existingBarang.hargaBeliSupplier,
-          hargaJual: Number(hargaJual) || existingBarang.hargaJual,
           fotoBarang: newUrlFoto,
           updated_at: new Date(),
         },
@@ -500,6 +519,59 @@ exports.updateEtalase = async (req, res) => {
       return res.status(500).json({ resCode: '99', resMessage: 'Failed to update Barang', error: error.message });
     }
   });
+};
+
+exports.updateHargaEtalase = async (req, res) => {
+  const { id } = req.params;
+  const { hargaBeliSupplier, hargaJual } = req.body;
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ resCode: '99', message: 'Invalid ID format' });
+    }
+
+    const existingBarang = await EtalaseModel.findById(id);
+    if (!existingBarang) {
+      return res.status(404).json({ resCode: '01', message: 'Barang not found' });
+    }
+
+    const updatedEtalase = await EtalaseModel.findByIdAndUpdate(
+      id,
+      {
+        hargaBeliSupplier: Number(hargaBeliSupplier) || existingBarang.hargaBeliSupplier,
+        hargaJual: hargaJual || existingBarang.hargaJual,
+        updated_at: new Date(),
+      },
+      { new: true }
+    );
+
+    await new logEtalaseModel({
+      nama: existingBarang.nama,
+      fotoBarang: existingBarang.fotoBarang,
+      size: existingBarang.size,
+      supplier: new mongoose.Types.ObjectId(existingBarang.supplier),
+      bentukBarang: existingBarang.bentukBarang,
+      settinganMC: existingBarang.settinganMC,
+      jumlahKiloBefore: existingBarang.jumlahKilo,
+      jumlahKiloAfter: Number(existingBarang.jumlahKilo),
+      jumlahMCPLSBefore: existingBarang.jumlahMCPLS,
+      jumlahMCPLSAfter: Number(existingBarang.jumlahMCPLS),
+      hargaBeliSupplier: Number(hargaBeliSupplier),
+      hargaJual: hargaJual,
+      status: 'UPDATE HARGA BY ADMIN',
+      created_at: new Date(),
+      updated_at: new Date(),
+    }).save();
+
+    res.status(200).json({
+      resCode: '00',
+      resMessage: 'Harga Barang berhasil diupdate',
+      Etalase: updatedEtalase,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ resCode: '99', resMessage: 'Failed to update Barang', error: error.message });
+  }
 };
 
 exports.penjualanEtalase = async (req, res) => {

@@ -9,6 +9,7 @@ const { authMiddleware } = require('../middlewares/authMiddleware');
 // controller
 const userController = require('../controllers/userController');
 const supplierController = require('../controllers/supplierController');
+const paramController = require('../controllers/paramController');
 const etalaseController = require('../controllers/etalaseController');
 const logEtalaseController = require('../controllers/logEtalaseController');
 const reportController = require('../controllers/reportController');
@@ -43,6 +44,12 @@ router.get('/supplier/:id', authMiddleware, supplierController.getSupplierById);
 router.put('/supplier/:id', authMiddleware, supplierController.updateSupplier);
 router.delete('/supplier/:id', authMiddleware, supplierController.deleteSupplier);
 
+// Param
+router.post('/getparam', authMiddleware, paramController.getAllParams);
+router.post('/param', authMiddleware, paramController.createParam);
+router.put('/param/:id', authMiddleware, paramController.updateParam);
+router.delete('/param/:id', authMiddleware, paramController.deleteParam);
+
 // dashboard
 router.post('/getetalase', etalaseController.getEtalases);
 router.post('/report', etalaseController.report);
@@ -57,6 +64,8 @@ router.get('/etalase/:id', authMiddleware, etalaseController.getEtalaseById);
 router.put('/etalase/:id', authMiddleware, etalaseController.updateEtalase);
 router.put('/etalase/penjualan/:id', authMiddleware, etalaseController.penjualanEtalase);
 router.delete('/etalase/delete/:id', authMiddleware, etalaseController.deleteEtalase);
+router.put('/hargaetalase/:id', authMiddleware, etalaseController.updateHargaEtalase);
+
 
 // Log Etalase
 router.post('/getLogEtalase', authMiddleware, logEtalaseController.getlogEtalases);
