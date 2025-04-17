@@ -344,7 +344,7 @@ exports.createEtalase = async (req, res) => {
 
     try {
       const {
-        nama, size, supplier, bentukBarang, settinganMC,
+        created_at, nama, size, supplier, bentukBarang, settinganMC,
         jumlahKilo, jumlahMCPLS, hargaBeliSupplier, hargaJual, noSurat
       } = req.body;
 
@@ -390,7 +390,7 @@ exports.createEtalase = async (req, res) => {
         jumlahMCPLS: parsedJumlahMCPLS,
         hargaJual: parsedHargaJual,
         hargaBeliSupplier: parsedHargaBeliSupplier,
-        created_at: new Date(),
+        created_at,
         updated_at: new Date(),
       });
       await newEtalase.save();
@@ -439,7 +439,7 @@ exports.updateEtalase = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { nama, size, supplier, bentukBarang, settinganMC, jumlahKilo, jumlahMCPLS, hargaBeliSupplier, hargaJual, noSurat } = req.body;
+    const { created_at, nama, size, supplier, bentukBarang, settinganMC, jumlahKilo, jumlahMCPLS, hargaBeliSupplier, hargaJual, noSurat } = req.body;
 
     try {
       if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -492,6 +492,7 @@ exports.updateEtalase = async (req, res) => {
           jumlahMCPLS: Number(jumlahMCPLS) || existingBarang.jumlahMCPLS,
           hargaBeliSupplier: Number(hargaBeliSupplier) || existingBarang.hargaBeliSupplier,
           fotoBarang: newUrlFoto,
+          created_at,
           updated_at: new Date(),
         },
         { new: true }
@@ -589,7 +590,7 @@ exports.penjualanEtalase = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { nama, size, supplier, bentukBarang, settinganMC, jumlahKiloBefore, jumlahKiloAfter, jumlahMCPLSBefore, jumlahMCPLSAfter, hargaBeliSupplier, hargaJual, jumlahPembayaran, suratJalan } = req.body;
+    const { created_at, nama, size, supplier, bentukBarang, settinganMC, jumlahKiloBefore, jumlahKiloAfter, jumlahMCPLSBefore, jumlahMCPLSAfter, hargaBeliSupplier, hargaJual, jumlahPembayaran, suratJalan } = req.body;
     const newUrlFoto = req.file ? `/uploads/${req.file.filename}` : null; // Simpan path file jika ada
 
     try {
@@ -680,7 +681,7 @@ exports.penjualanEtalase = async (req, res) => {
         hargaJual: updatedEtalase.hargaJual,
         jumlahPembayaran: temp,
         status: 'OUT',
-        created_at: new Date(),
+        created_at,
         updated_at: new Date(),
       });
 
