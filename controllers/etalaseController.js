@@ -28,7 +28,7 @@ exports.getEtalases = async (req, res) => {
     const limit = parseInt(req.body.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const { bentukBarang, search, nama, size, supplier } = req.body;
+    const { bentukBarang, search, nama, size, supplier, sortNama } = req.body;
 
     const now = new Date();
     const startOfToday = new Date(now.setHours(0, 0, 0, 0));
@@ -64,7 +64,6 @@ exports.getEtalases = async (req, res) => {
       });
     }
 
-    // Filter tambahan
     if (nama) {
       matchStage.$and.push({ nama: { $regex: nama, $options: "i" } });
     }
@@ -84,6 +83,13 @@ exports.getEtalases = async (req, res) => {
       }
     }
 
+    // Atur sort berdasarkan nama jika diberikan, default ke updated_at
+    let sortStage = { updated_at: -1 };
+    if (sortNama) {
+      const sortDirection = sortNama.toLowerCase() === 'asc' ? 1 : -1;
+      sortStage = { nama: sortDirection };
+    }
+
     const Etalases = await EtalaseModel.aggregate([
       { $match: matchStage },
       {
@@ -94,7 +100,7 @@ exports.getEtalases = async (req, res) => {
           as: 'supplierData'
         }
       },
-      { $sort: { updated_at: -1 } },
+      { $sort: sortStage },
       { $skip: skip },
       { $limit: limit }
     ]);
@@ -1038,9 +1044,6 @@ exports.report = async (req, res) => {
       const date = new Date(item.created_at);
       const formattedDate = `${String(date.getDate()).padStart(2, '0')} ${String(date.getMonth() + 1).padStart(2, '0')} ${date.getFullYear()}`;
 
-      if (item.bentukBarang !== 'MC' && item.bentukBarang !== 'PLS') {
-        debugger
-      }
       const values = [
         index + 1,
         truncate(item.nama, 15),
