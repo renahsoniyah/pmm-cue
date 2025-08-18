@@ -982,7 +982,6 @@ exports.report = async (req, res) => {
 
     const headers = ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG', 'KET'];
 
-    const tableMarginX = 0;
     const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
     const columnWidths = [
@@ -1001,7 +1000,6 @@ exports.report = async (req, res) => {
     const startX = doc.page.margins.left;
     let cursorY = doc.y;
 
-    const truncate = (text, length) => (text && text.length > length ? text.substring(0, length) + '...' : text);
     const formatNumber = (num) => {
       if (!num) return '0';
       let temp = Number(num);
@@ -1028,6 +1026,33 @@ exports.report = async (req, res) => {
       cursorY = doc.y;
     };
 
+    // ⬇️ Helper untuk menggambar row dengan auto-wrap
+    const drawTableRow = (values) => {
+      // Hitung tinggi teks per kolom
+      const cellHeights = values.map((value, i) => {
+        const textOptions = {
+          width: columnWidths[i] - 6,
+          align: 'center'
+        };
+        return doc.heightOfString(value ? value.toString() : '', textOptions) + 10;
+      });
+
+      // Tinggi baris = paling tinggi
+      const rowHeight = Math.max(...cellHeights);
+
+      // Gambar teks + border
+      values.forEach((value, i) => {
+        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+        doc.fillColor('black').fontSize(9).text(value ? value.toString() : '', x + 3, cursorY + 5, {
+          width: columnWidths[i] - 6,
+          align: 'center'
+        });
+        doc.rect(x, cursorY, columnWidths[i], rowHeight).stroke();
+      });
+
+      cursorY += rowHeight;
+    };
+
     drawPDFHeader();
     drawTableHeader();
 
@@ -1044,14 +1069,14 @@ exports.report = async (req, res) => {
 
       const date = new Date(item.created_at);
       const formattedDate = `${String(date.getDate()).padStart(2, '0')} ${String(date.getMonth() + 1).padStart(2, '0')} ${date.getFullYear()}`;
-      
+
       const values = [
         index + 1,
-        truncate(item.nama, 15),
-        item.size,
-        truncate(supplierName, 15),
+        item.nama || '',
+        item.size || '',
+        supplierName,
         formattedDate,
-        truncate(item.noSurat || '-', 30),
+        item.noSurat || '-',
         formatNumber(item.jumlahKilo),
         item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
         item.bentukBarang === 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
@@ -1064,16 +1089,7 @@ exports.report = async (req, res) => {
         drawTableHeader();
       }
 
-      values.forEach((value, i) => {
-        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
-        doc.fillColor('black').fontSize(9).text(value.toString(), x + 3, cursorY + 5, {
-          width: columnWidths[i] - 6,
-          align: 'center',
-        });
-        doc.rect(x, cursorY, columnWidths[i], 22).stroke();
-      });
-
-      cursorY += 22;
+      drawTableRow(values);
     }
 
     if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
@@ -1105,6 +1121,5 @@ exports.report = async (req, res) => {
   } catch (err) {
     console.error('❌ Error:', err);
     return res.status(500).json({ resCode: '99', message: 'Error fetching Etalases', error: err.message });
-
   }
 }
