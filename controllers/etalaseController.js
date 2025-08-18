@@ -980,9 +980,8 @@ exports.report = async (req, res) => {
       }
     });
 
-    const headers = ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG', 'KET'];
+    const headers = ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG', 'HARGA BELI'];
 
-    const tableMarginX = 0;
     const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
     const columnWidths = [
@@ -995,13 +994,12 @@ exports.report = async (req, res) => {
       contentWidth * 0.10,  // TOTAL (KG)
       contentWidth * 0.10,  // MC
       contentWidth * 0.10,  // KRG
-      contentWidth * 0.10,  // KET
+      contentWidth * 0.10,  // HARGA BELI
     ];
 
     const startX = doc.page.margins.left;
     let cursorY = doc.y;
 
-    const truncate = (text, length) => (text && text.length > length ? text.substring(0, length) + '...' : text);
     const formatNumber = (num) => {
       if (!num) return '0';
       let temp = Number(num);
@@ -1028,10 +1026,37 @@ exports.report = async (req, res) => {
       cursorY = doc.y;
     };
 
+    // ⬇️ Helper untuk menggambar row dengan auto-wrap
+    const drawTableRow = (values) => {
+      // Hitung tinggi teks per kolom
+      const cellHeights = values.map((value, i) => {
+        const textOptions = {
+          width: columnWidths[i] - 6,
+          align: 'center'
+        };
+        return doc.heightOfString(value ? value.toString() : '', textOptions) + 10;
+      });
+
+      // Tinggi baris = paling tinggi
+      const rowHeight = Math.max(...cellHeights);
+
+      // Gambar teks + border
+      values.forEach((value, i) => {
+        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+        doc.fillColor('black').fontSize(9).text(value ? value.toString() : '', x + 3, cursorY + 5, {
+          width: columnWidths[i] - 6,
+          align: 'center'
+        });
+        doc.rect(x, cursorY, columnWidths[i], rowHeight).stroke();
+      });
+
+      cursorY += rowHeight;
+    };
+
     drawPDFHeader();
     drawTableHeader();
 
-    let totalKG = 0, totalMC = 0, totalKRG = 0;
+    let totalKG = 0, totalMC = 0, totalKRG = 0; totalHargaBeli = 0;
 
     for (let index = 0; index < itemsToBackup.length; index++) {
       const item = itemsToBackup[index];
@@ -1041,21 +1066,22 @@ exports.report = async (req, res) => {
       totalKG += Number(item.jumlahKilo) || 0;
       totalMC += Number(item.jumlahMCPLS) || 0;
       totalKRG += Number(item.jumlahKRG) || 0;
+      totalHargaBeli += Number(item.hargaBeliSupplier) || 0;
 
       const date = new Date(item.created_at);
       const formattedDate = `${String(date.getDate()).padStart(2, '0')} ${String(date.getMonth() + 1).padStart(2, '0')} ${date.getFullYear()}`;
 
       const values = [
         index + 1,
-        truncate(item.nama, 15),
-        item.size,
-        truncate(supplierName, 15),
+        item.nama || '',
+        item.size || '',
+        supplierName,
         formattedDate,
-        truncate(item.noSurat || '-', 30),
+        item.noSurat || '-',
         formatNumber(item.jumlahKilo),
         item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
         item.bentukBarang === 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
-        keterangan,
+        item.hargaBeliSupplier ? formatNumber(item.hargaBeliSupplier) : '0',
       ];
 
       if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
@@ -1064,16 +1090,7 @@ exports.report = async (req, res) => {
         drawTableHeader();
       }
 
-      values.forEach((value, i) => {
-        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
-        doc.fillColor('black').fontSize(9).text(value.toString(), x + 3, cursorY + 5, {
-          width: columnWidths[i] - 6,
-          align: 'center',
-        });
-        doc.rect(x, cursorY, columnWidths[i], 22).stroke();
-      });
-
-      cursorY += 22;
+      drawTableRow(values);
     }
 
     if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
@@ -1086,14 +1103,33 @@ exports.report = async (req, res) => {
     doc.fillColor('#B22222').rect(startX, cursorY, contentWidth, 25).fill();
     doc.fillColor('white').fontSize(8).text('GRAND TOTAL', startX + 5, cursorY + 8);
 
-    const totalCols = [6, 7, 8]; // index dari kolom TOTAL (KG), MC, KRG
-    [totalKG, totalMC, totalKRG].forEach((total, idx) => {
+    // Helper untuk format rupiah
+    const formatRupiah = (num) => {
+      if (!num) return 'Rp. 0,00';
+      return 'Rp. ' + Number(num).toLocaleString('id-ID', { minimumFractionDigits: 2 });
+    };
+
+    // Helper untuk format angka dengan titik ribuan
+    const formatNumberWithDot = (num) => {
+      if (!num) return '0';
+      return Number(num).toLocaleString('id-ID');
+    };
+
+    const totalCols = [6, 7, 8, 9]; // index dari kolom TOTAL (KG), MC, KRG, HARGA BELI
+    [totalKG, totalMC, totalKRG, totalHargaBeli].forEach((total, idx) => {
       const colIndex = totalCols[idx];
       const x = startX + columnWidths.slice(0, colIndex).reduce((a, b) => a + b, 0);
-      doc.text(formatNumber(total), x, cursorY + 8, {
+      doc.text(
+      colIndex === 9
+        ? formatRupiah(total)
+        : formatNumberWithDot(total),
+      x,
+      cursorY + 8,
+      {
         width: columnWidths[colIndex],
         align: 'center',
-      });
+      }
+      );
     });
 
     doc.end();
@@ -1105,6 +1141,5 @@ exports.report = async (req, res) => {
   } catch (err) {
     console.error('❌ Error:', err);
     return res.status(500).json({ resCode: '99', message: 'Error fetching Etalases', error: err.message });
-
   }
 }
