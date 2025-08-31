@@ -954,189 +954,242 @@ exports.report = async (req, res) => {
 
     if (itemsToBackup.length === 0) {
       console.log('Tidak ada barang yang perlu di-backup hari ini.');
-      return;
+      return res.status(200).json({ resCode: '00', file: 'Tidak ada data' });
     }
 
-    const reportFileName = `report_${today}.pdf`;
-    const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
-    const buffers = [];
-    let filebaseUrl = ""
+    // Helper untuk generate PDF (biar DRY)
+    const generatePDF = async ({ includeHargaBeli, reportFileName }) => {
+      return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+        const buffers = [];
+        let filebaseUrl = "";
 
-    doc.on('data', (chunk) => buffers.push(chunk));
-    doc.on('end', async () => {
-      try {
-        const reportBuffer = Buffer.concat(buffers);
-        filebaseUrl = await uploadToFilebase(reportBuffer, reportFileName);
+        doc.on('data', (chunk) => buffers.push(chunk));
+        doc.on('end', async () => {
+          try {
+            const reportBuffer = Buffer.concat(buffers);
+            filebaseUrl = await uploadToFilebase(reportBuffer, reportFileName);
 
-        await Report.findOneAndUpdate(
-          { date: today },
-          { file_name: reportFileName, path: reportFileName },
-          { upsert: true }
-        );
+            await Report.findOneAndUpdate(
+              { file_name: reportFileName },
+              { file_name: reportFileName, path: reportFileName, date: today },
+              { upsert: true }
+            );
 
-        console.log(`✅ File dapat diakses di: ${filebaseUrl}`);
-      } catch (error) {
-        console.error('❌ Gagal mengunggah ke Filebase:', error);
-      }
-    });
-
-    const headers = ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG', 'HARGA BELI'];
-
-    const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-
-    const columnWidths = [
-      contentWidth * 0.05,  // NO
-      contentWidth * 0.15,  // NAMA IKAN
-      contentWidth * 0.06,  // SIZE
-      contentWidth * 0.12,  // SUPPLIER
-      contentWidth * 0.10,  // TGL MASUK
-      contentWidth * 0.12,  // NO SURAT
-      contentWidth * 0.10,  // TOTAL (KG)
-      contentWidth * 0.10,  // MC
-      contentWidth * 0.10,  // KRG
-      contentWidth * 0.10,  // HARGA BELI
-    ];
-
-    const startX = doc.page.margins.left;
-    let cursorY = doc.y;
-
-    const formatNumber = (num) => {
-      if (!num) return '0';
-      let temp = Number(num);
-      return temp % 1 === 0 ? temp.toString() : temp.toFixed(2);
-    };
-
-    const drawTableHeader = () => {
-      doc.fillColor('white').rect(startX, cursorY, contentWidth, 25).fill('#4682B4');
-      headers.forEach((header, i) => {
-        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
-        doc.fillColor('white').fontSize(9).text(header, x + 3, cursorY + 8, {
-          width: columnWidths[i] - 6,
-          align: 'center',
+            console.log(`✅ File dapat diakses di: ${filebaseUrl}`);
+            resolve();
+          } catch (error) {
+            console.error('❌ Gagal mengunggah ke Filebase:', error);
+            reject(error);
+          }
         });
-        doc.rect(x, cursorY, columnWidths[i], 25).stroke();
-      });
-      cursorY += 25;
-    };
 
-    const drawPDFHeader = () => {
-      doc.fontSize(16).fillColor('black').text('STOK GLOBAL COLD STORAGE PSR BARU', { align: 'center' });
-      doc.fontSize(12).text(`PERIODE ${today}`, { align: 'center' });
-      doc.moveDown(1);
-      cursorY = doc.y;
-    };
+        const headers = includeHargaBeli
+          ? ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG', 'HARGA BELI']
+          : ['NO', 'NAMA IKAN', 'SIZE', 'SUPPLIER', 'TGL MASUK', 'NO SURAT', 'TOTAL (KG)', 'MC/PLS', 'KRG'];
 
-    // ⬇️ Helper untuk menggambar row dengan auto-wrap
-    const drawTableRow = (values) => {
-      // Hitung tinggi teks per kolom
-      const cellHeights = values.map((value, i) => {
-        const textOptions = {
-          width: columnWidths[i] - 6,
-          align: 'center'
+        const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+        const columnWidths = includeHargaBeli
+          ? [
+              contentWidth * 0.05,  // NO
+              contentWidth * 0.15,  // NAMA IKAN
+              contentWidth * 0.06,  // SIZE
+              contentWidth * 0.12,  // SUPPLIER
+              contentWidth * 0.10,  // TGL MASUK
+              contentWidth * 0.12,  // NO SURAT
+              contentWidth * 0.10,  // TOTAL (KG)
+              contentWidth * 0.10,  // MC
+              contentWidth * 0.10,  // KRG
+              contentWidth * 0.10,  // HARGA BELI
+            ]
+          : [
+              contentWidth * 0.06,  // NO
+              contentWidth * 0.18,  // NAMA IKAN
+              contentWidth * 0.08,  // SIZE
+              contentWidth * 0.14,  // SUPPLIER
+              contentWidth * 0.12,  // TGL MASUK
+              contentWidth * 0.14,  // NO SURAT
+              contentWidth * 0.12,  // TOTAL (KG)
+              contentWidth * 0.08,  // MC
+              contentWidth * 0.08,  // KRG
+            ];
+
+        const startX = doc.page.margins.left;
+        let cursorY = doc.y;
+
+        const formatNumber = (num) => {
+          if (!num) return '0';
+          let temp = Number(num);
+          return temp % 1 === 0 ? temp.toString() : temp.toFixed(2);
         };
-        return doc.heightOfString(value ? value.toString() : '', textOptions) + 10;
-      });
 
-      // Tinggi baris = paling tinggi
-      const rowHeight = Math.max(...cellHeights);
+        const drawTableHeader = () => {
+          doc.fillColor('white').rect(startX, cursorY, contentWidth, 25).fill('#4682B4');
+          headers.forEach((header, i) => {
+            const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+            doc.fillColor('white').fontSize(9).text(header, x + 3, cursorY + 8, {
+              width: columnWidths[i] - 6,
+              align: 'center',
+            });
+            doc.rect(x, cursorY, columnWidths[i], 25).stroke();
+          });
+          cursorY += 25;
+        };
 
-      // Gambar teks + border
-      values.forEach((value, i) => {
-        const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
-        doc.fillColor('black').fontSize(9).text(value ? value.toString() : '', x + 3, cursorY + 5, {
-          width: columnWidths[i] - 6,
-          align: 'center'
-        });
-        doc.rect(x, cursorY, columnWidths[i], rowHeight).stroke();
-      });
+        const drawPDFHeader = () => {
+          doc.fontSize(16).fillColor('black').text('STOK GLOBAL COLD STORAGE PSR BARU', { align: 'center' });
+          doc.fontSize(12).text(`PERIODE ${today}`, { align: 'center' });
+          doc.moveDown(1);
+          cursorY = doc.y;
+        };
 
-      cursorY += rowHeight;
-    };
+        const drawTableRow = (values) => {
+          const cellHeights = values.map((value, i) => {
+            const textOptions = {
+              width: columnWidths[i] - 6,
+              align: 'center'
+            };
+            return doc.heightOfString(value ? value.toString() : '', textOptions) + 10;
+          });
+          const rowHeight = Math.max(...cellHeights);
+          values.forEach((value, i) => {
+            const x = startX + columnWidths.slice(0, i).reduce((a, b) => a + b, 0);
+            doc.fillColor('black').fontSize(9).text(value ? value.toString() : '', x + 3, cursorY + 5, {
+              width: columnWidths[i] - 6,
+              align: 'center'
+            });
+            doc.rect(x, cursorY, columnWidths[i], rowHeight).stroke();
+          });
+          cursorY += rowHeight;
+        };
 
-    drawPDFHeader();
-    drawTableHeader();
-
-    let totalKG = 0, totalMC = 0, totalKRG = 0; totalHargaBeli = 0;
-
-    for (let index = 0; index < itemsToBackup.length; index++) {
-      const item = itemsToBackup[index];
-      const supplierName = item.supplierData?.nama || '-';
-      const keterangan = Number(item.jumlahKilo) === 0 ? 'Habis' : '';
-
-      totalKG += Number(item.jumlahKilo) || 0;
-      totalMC += Number(item.jumlahMCPLS) || 0;
-      totalKRG += Number(item.jumlahKRG) || 0;
-      totalHargaBeli += Number(item.hargaBeliSupplier) || 0;
-
-      const date = new Date(item.created_at);
-      const formattedDate = `${String(date.getDate()).padStart(2, '0')} ${String(date.getMonth() + 1).padStart(2, '0')} ${date.getFullYear()}`;
-
-      const values = [
-        index + 1,
-        item.nama || '',
-        item.size || '',
-        supplierName,
-        formattedDate,
-        item.noSurat || '-',
-        formatNumber(item.jumlahKilo),
-        item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
-        item.bentukBarang === 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
-        item.hargaBeliSupplier ? formatNumber(item.hargaBeliSupplier) : '0',
-      ];
-
-      if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
-        doc.addPage();
         drawPDFHeader();
         drawTableHeader();
-      }
 
-      drawTableRow(values);
-    }
+        let totalKG = 0, totalMC = 0, totalKRG = 0, totalHargaBeli = 0;
 
-    if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
-      doc.addPage();
-      drawPDFHeader();
-      drawTableHeader();
-    }
+        for (let index = 0; index < itemsToBackup.length; index++) {
+          const item = itemsToBackup[index];
+          const supplierName = item.supplierData?.nama || '-';
 
-    // Grand Total row
-    doc.fillColor('#B22222').rect(startX, cursorY, contentWidth, 25).fill();
-    doc.fillColor('white').fontSize(8).text('GRAND TOTAL', startX + 5, cursorY + 8);
+          totalKG += Number(item.jumlahKilo) || 0;
+          totalMC += Number(item.jumlahMCPLS) || 0;
+          totalKRG += Number(item.jumlahKRG) || 0;
+          totalHargaBeli += Number(item.hargaBeliSupplier) || 0;
 
-    // Helper untuk format rupiah
-    const formatRupiah = (num) => {
-      if (!num) return 'Rp. 0,00';
-      return 'Rp. ' + Number(num).toLocaleString('id-ID', { minimumFractionDigits: 2 });
+          const date = new Date(item.created_at);
+          const formattedDate = `${String(date.getDate()).padStart(2, '0')} ${String(date.getMonth() + 1).padStart(2, '0')} ${date.getFullYear()}`;
+
+          let values;
+          if (includeHargaBeli) {
+            values = [
+              index + 1,
+              item.nama || '',
+              item.size || '',
+              supplierName,
+              formattedDate,
+              item.noSurat || '-',
+              formatNumber(item.jumlahKilo),
+              item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
+              item.bentukBarang === 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
+              item.hargaBeliSupplier ? formatNumber(item.hargaBeliSupplier) : '0',
+            ];
+          } else {
+            values = [
+              index + 1,
+              item.nama || '',
+              item.size || '',
+              supplierName,
+              formattedDate,
+              item.noSurat || '-',
+              formatNumber(item.jumlahKilo),
+              item.bentukBarang !== 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
+              item.bentukBarang === 'KRG' ? formatNumber(item.jumlahMCPLS) : '0',
+            ];
+          }
+
+          if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
+            doc.addPage();
+            drawPDFHeader();
+            drawTableHeader();
+          }
+
+          drawTableRow(values);
+        }
+
+        if (cursorY + 30 > doc.page.height - doc.page.margins.bottom) {
+          doc.addPage();
+          drawPDFHeader();
+          drawTableHeader();
+        }
+
+        // Grand Total row
+        doc.fillColor('#B22222').rect(startX, cursorY, contentWidth, 25).fill();
+        doc.fillColor('white').fontSize(8).text('GRAND TOTAL', startX + 5, cursorY + 8);
+
+        const formatRupiah = (num) => {
+          if (!num) return 'Rp. 0,00';
+          return 'Rp. ' + Number(num).toLocaleString('id-ID', { minimumFractionDigits: 2 });
+        };
+
+        const formatNumberWithDot = (num) => {
+          if (!num) return '0';
+          return Number(num).toLocaleString('id-ID');
+        };
+
+        if (includeHargaBeli) {
+          const totalCols = [6, 7, 8, 9];
+          [totalKG, totalMC, totalKRG, totalHargaBeli].forEach((total, idx) => {
+            const colIndex = totalCols[idx];
+            const x = startX + columnWidths.slice(0, colIndex).reduce((a, b) => a + b, 0);
+            doc.text(
+              colIndex === 9
+                ? formatRupiah(total)
+                : formatNumberWithDot(total),
+              x,
+              cursorY + 8,
+              {
+                width: columnWidths[colIndex],
+                align: 'center',
+              }
+            );
+          });
+        } else {
+          const totalCols = [6, 7, 8];
+          [totalKG, totalMC, totalKRG].forEach((total, idx) => {
+            const colIndex = totalCols[idx];
+            const x = startX + columnWidths.slice(0, colIndex).reduce((a, b) => a + b, 0);
+            doc.text(
+              formatNumberWithDot(total),
+              x,
+              cursorY + 8,
+              {
+                width: columnWidths[colIndex],
+                align: 'center',
+              }
+            );
+          });
+        }
+
+        doc.end();
+      });
     };
 
-    // Helper untuk format angka dengan titik ribuan
-    const formatNumberWithDot = (num) => {
-      if (!num) return '0';
-      return Number(num).toLocaleString('id-ID');
-    };
-
-    const totalCols = [6, 7, 8, 9]; // index dari kolom TOTAL (KG), MC, KRG, HARGA BELI
-    [totalKG, totalMC, totalKRG, totalHargaBeli].forEach((total, idx) => {
-      const colIndex = totalCols[idx];
-      const x = startX + columnWidths.slice(0, colIndex).reduce((a, b) => a + b, 0);
-      doc.text(
-      colIndex === 9
-        ? formatRupiah(total)
-        : formatNumberWithDot(total),
-      x,
-      cursorY + 8,
-      {
-        width: columnWidths[colIndex],
-        align: 'center',
-      }
-      );
+    // Generate untuk admin
+    await generatePDF({
+      includeHargaBeli: true,
+      reportFileName: `report_${today}.pdf`
     });
 
-    doc.end();
+    // Generate untuk karyawan
+    await generatePDF({
+      includeHargaBeli: false,
+      reportFileName: `report_karyawan_${today}.pdf`
+    });
 
     return res.status(200).json({
       resCode: '00',
-      file : 'berhasil'
+      file: 'berhasil'
     });
   } catch (err) {
     console.error('❌ Error:', err);

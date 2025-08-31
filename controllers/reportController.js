@@ -17,11 +17,29 @@ const getAllReports = async (req, res) => {
       filter.file_name = { $regex: file_name, $options: 'i' }; // Case-insensitive search
     }
 
-    // Ambil data dengan filter, sorting, dan pagination
-    const reports = await Report.find(filter)
-      .sort({ date: -1 }) // Urutkan berdasarkan date (desc)
-      .skip(skip)
-      .limit(limit);
+    // Ambil data dengan filter, sorting, dan pagination, lalu distinct berdasarkan 'date'
+    // Jika ada data dengan date sama tapi file_name/path beda, hanya ambil yang file_name diawali 'report_' saja (bukan 'report_karyawan_'), dan satu (terbaru) per date
+    const pipeline = [
+      { 
+        $match: { 
+          ...filter, 
+          file_name: { $regex: '^report_((?!karyawan).)*\\.pdf$', $options: 'i' } 
+        } 
+      },
+      { $sort: { date: -1, _id: -1 } }, // sort terbaru dulu
+      {
+        $group: {
+          _id: "$date",
+          doc: { $first: "$$ROOT" } // ambil satu data (terbaru) per date
+        }
+      },
+      { $replaceRoot: { newRoot: "$doc" } },
+      { $sort: { date: -1 } }, // sort hasil akhir
+      { $skip: skip },
+      { $limit: limit }
+    ];
+
+    const reports = await Report.aggregate(pipeline);
 
     // Hitung total record yang sesuai dengan filter
     const totalRecords = await Report.countDocuments(filter);
