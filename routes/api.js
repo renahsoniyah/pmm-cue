@@ -52,6 +52,7 @@ router.delete('/param/:id', authMiddleware, paramController.deleteParam);
 
 // dashboard
 router.post('/getetalase', etalaseController.getEtalases);
+router.post('/listHarga', etalaseController.listIkan);
 router.post('/report', etalaseController.report);
 router.post('/getEtalaseParam', etalaseController.getDistinctEtalases);
 router.post('/getEtalaseParamAll', etalaseController.getDistinctEtalasesAll);
