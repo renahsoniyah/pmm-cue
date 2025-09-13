@@ -22,7 +22,97 @@ const s3Client = new S3Client({
   },
 });
 
+exports.listIkan = async (req, res) => {
+  // ikan dengan stock habis tetep akan muncul
+  try {
+    const page = parseInt(req.body.index) || 1;
+    const limit = parseInt(req.body.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const { bentukBarang, search, nama, size, supplier, sortNama } = req.body;
+
+    let matchStage = {
+      $and: []
+    };
+
+    if (bentukBarang) {
+      matchStage.$and.push({ bentukBarang: bentukBarang });
+    }
+
+    if (search) {
+      matchStage.$and.push({
+        $or: [
+          { nama: { $regex: search, $options: 'i' } },
+        ]
+      });
+    }
+
+    if (nama) {
+      matchStage.$and.push({ nama: { $regex: nama, $options: "i" } });
+    }
+
+    if (size) {
+      matchStage.$and.push({ size: size });
+    }
+
+    if (supplier) {
+      try {
+        matchStage.$and.push({ supplier: new mongoose.Types.ObjectId(supplier) });
+      } catch (error) {
+        return res.status(400).json({
+          resCode: "01",
+          resMessage: "Invalid supplier ID format",
+        });
+      }
+    }
+
+    // Atur sort berdasarkan nama jika diberikan, default ke updated_at
+    let sortStage = { updated_at: -1 };
+    if (sortNama) {
+      const sortDirection = sortNama.toLowerCase() === 'asc' ? 1 : -1;
+      sortStage = { nama: sortDirection };
+    }
+
+    const Etalases = await EtalaseModel.aggregate([
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: 'suppliers',
+          localField: 'supplier',
+          foreignField: '_id',
+          as: 'supplierData'
+        }
+      },
+      { $sort: sortStage },
+      { $skip: skip },
+      { $limit: limit }
+    ]);
+
+    for (let etalase of Etalases) {
+      if (etalase.fotoBarang) {
+        etalase.fotoBarang = await signedUrlTools(etalase.fotoBarang);
+      }
+    }
+
+    const totalRecords = await EtalaseModel.countDocuments(matchStage);
+
+    return res.status(200).json({
+      resCode: '00',
+      resMessage: 'Berhasil mendapatkan data',
+      Etalase: Etalases,
+      page,
+      limit,
+      totalRecords,
+      totalPages: Math.ceil(totalRecords / limit),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ resCode: '99', message: 'Error fetching Etalases', error: err.message });
+  }
+};
+
 exports.getEtalases = async (req, res) => {
+  // ikan dengan stock habis tidak akan muncul
   try {
     const page = parseInt(req.body.index) || 1;
     const limit = parseInt(req.body.limit) || 10;
