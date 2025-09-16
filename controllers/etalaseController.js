@@ -31,16 +31,14 @@ exports.listIkan = async (req, res) => {
 
     const { bentukBarang, search, nama, size, supplier, sortNama } = req.body;
 
-    let matchStage = {
-      $and: []
-    };
+    let andConditions = [];
 
     if (bentukBarang) {
-      matchStage.$and.push({ bentukBarang: bentukBarang });
+      andConditions.push({ bentukBarang: bentukBarang });
     }
 
     if (search) {
-      matchStage.$and.push({
+      andConditions.push({
         $or: [
           { nama: { $regex: search, $options: 'i' } },
         ]
@@ -48,22 +46,27 @@ exports.listIkan = async (req, res) => {
     }
 
     if (nama) {
-      matchStage.$and.push({ nama: { $regex: nama, $options: "i" } });
+      andConditions.push({ nama: { $regex: nama, $options: "i" } });
     }
 
     if (size) {
-      matchStage.$and.push({ size: size });
+      andConditions.push({ size: size });
     }
 
     if (supplier) {
       try {
-        matchStage.$and.push({ supplier: new mongoose.Types.ObjectId(supplier) });
+        andConditions.push({ supplier: new mongoose.Types.ObjectId(String(supplier)) });
       } catch (error) {
         return res.status(400).json({
           resCode: "01",
           resMessage: "Invalid supplier ID format",
         });
       }
+    }
+
+    let matchStage = {};
+    if (andConditions.length > 0) {
+      matchStage.$and = andConditions;
     }
 
     // Atur sort berdasarkan nama jika diberikan, default ke updated_at
